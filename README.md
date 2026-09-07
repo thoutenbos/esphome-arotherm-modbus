@@ -95,6 +95,8 @@ pin works if you wire elsewhere.
 The firmware validates every reassembled message against the standard
 Modbus RTU CRC-16 and decodes by function code and register count.
 
+![](sensors.png)
+
 | HA sensor | register | notes |
 |---|---|---|
 | `Compressor Inlet Temp` | `0x2007` | °C, D2C (`raw / 16`) |
