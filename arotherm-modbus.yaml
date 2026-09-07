@@ -1,0 +1,127 @@
+esphome:
+  name: arotherm-modbus
+  friendly_name: aroTHERM Modbus
+  comment: "Modbus reader for Vaillant aroTHERM heatpumps"
+
+esp32:
+  board: esp32dev
+  framework:
+    type: arduino
+
+external_components:
+  - source:
+      type: git
+      url: https://github.com/thoutenbos/esphome-arotherm-modbus
+      ref: main
+    components: [ arotherm_modbus ]
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+logger:
+  # level DEBUG will dump the raw messages
+  level: INFO
+  tx_buffer_size: 4096
+
+api:
+  encryption:
+    key: !secret api_encryption_key
+
+ota:
+  - platform: esphome
+    password: !secret ota_password
+
+time:
+  - platform: homeassistant
+    id: ha_time
+
+arotherm_modbus:
+  time_id: ha_time
+  rx_pin: 21
+
+  compressor_inlet_temp:
+    name: "Compressor Inlet Temp"
+  compressor_outlet_temp:
+    name: "Compressor Outlet Temp"
+  eev_outlet_temp:
+    name: "EEV Outlet Temp"
+  condensor_outlet_temp:
+    name: "Condensor Outlet Temp"
+  air_inlet_temp:
+    name: "Air Inlet Temp"
+  outside_temp:
+    name: "Outside Temp"
+  flow_temp:
+    id: flow_temp
+    name: "Flow Temp"
+  return_temp:
+    id: return_temp
+    name: "Return Temp"
+  high_pressure:
+    name: "High Pressure"
+  low_pressure:
+    name: "Low Pressure"
+  water_pressure:
+    name: "Water Pressure"
+  compressor_speed:
+    name: "Compressor Speed"
+  fan1_speed:
+    name: "Fan1 Speed"
+  building_pump_power:
+    name: "Building Pump Power"
+  eev_position:
+    name: "EEV Position"
+  eev_position_status:
+    name: "EEV Position Status"
+  compressor_speed_target:
+    name: "Compressor Speed Target"
+  subcooling:
+    name: "Subcooling"
+  superheat:
+    name: "Superheat"
+  electric_power_consumption:
+    id: electric_power_consumption
+    name: "Electric Power Consumption"
+  building_circuit_flow:
+    id: building_circuit_flow
+    name: "Building Circuit Flow"
+  demand_mode:
+    name: "Demand Mode"
+  run_phase:
+    name: "Run Phase"
+  requested_flow_temp:
+    name: "Requested Flow Temp"
+
+# --- Calculated values -------------------
+sensor:
+  - platform: template
+    name: "Thermal Power Delivery"
+    id: thermal_power_delivery
+    unit_of_measurement: "kW"
+    accuracy_decimals: 2
+    device_class: power
+    state_class: measurement
+    icon: "mdi:radiator"
+    update_interval: 10s
+    lambda: |-
+      float flow = id(building_circuit_flow).state;
+      float t_out = id(flow_temp).state;
+      float t_in = id(return_temp).state;
+      if (std::isnan(flow) || std::isnan(t_out) || std::isnan(t_in))
+        return {};
+      return flow * (t_out - t_in) * (4.186f / 3600.0f);
+
+  - platform: template
+    name: "Heat Pump COP"
+    id: heat_pump_cop
+    accuracy_decimals: 2
+    icon: "mdi:heat-pump-outline"
+    state_class: measurement
+    update_interval: 10s
+    lambda: |-
+      float thermal_kw = id(thermal_power_delivery).state;
+      float electric_w = id(electric_power_consumption).state;
+      if (std::isnan(thermal_kw) || std::isnan(electric_w) || electric_w < 50.0f)
+        return {};
+      return (thermal_kw * 1000.0f) / electric_w;
