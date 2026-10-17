@@ -308,11 +308,8 @@ std::string AroThermModbus::format_registers_(const uint8_t *data, size_t len) {
   const uint8_t *payload = nullptr;
 
   if (func == FUNCTION_READ_HOLDING_REGISTERS) {
-    if (len == FIXED_ADU_LEN) {
-      this->last_read_start_reg_ = (uint16_t) ((data[2] << 8) | data[3]);
-      this->last_read_count_ = (uint16_t) ((data[4] << 8) | data[5]);
-      return "";
-    }
+    if (len == FIXED_ADU_LEN)
+      return "";  // read request - already recorded by decode_message_()
     const uint8_t byte_count = data[READ_RESPONSE_BYTE_COUNT_OFFSET];
     if (byte_count % 2 != 0 || (size_t) (READ_RESPONSE_HEADER_LEN + byte_count + ADU_CRC_LEN) != len)
       return "";
@@ -396,6 +393,14 @@ void AroThermModbus::decode_message_(const uint8_t *data, size_t len) {
   if (!modbus_crc_valid_(data, len))
     return;
 
+  // A read request names the block its response belongs to; the response
+  // itself carries no start address. Remember it for the next response.
+  if (len == FIXED_ADU_LEN && data[1] == FUNCTION_READ_HOLDING_REGISTERS) {
+    this->last_read_start_reg_ = (uint16_t) ((data[2] << 8) | data[3]);
+    this->last_read_count_ = (uint16_t) ((data[4] << 8) | data[5]);
+    return;
+  }
+
   if (len >= ADU_ADDRESS_LEN + ADU_FUNCTION_LEN && data[1] == FUNCTION_WRITE_MULTIPLE_REGISTERS) {
     if (len < WRITE_REQUEST_HEADER_LEN + ADU_CRC_LEN)
       return;
@@ -417,7 +422,14 @@ void AroThermModbus::decode_message_(const uint8_t *data, size_t len) {
   const size_t n_regs = byte_count / 2;
 
   uint16_t base_register;
-  if (n_regs == 34) {
+  if (n_regs == this->last_read_count_ && this->last_read_start_reg_ != 0) {
+    // Normal case: the response to the read request seen just before it.
+    // This also covers units whose blocks have other lengths than the
+    // VWZ AI / aroTHERM 75/8.1: an aroTHERM Split plus (outdoor unit
+    // VWL 75/8.2, indoor unit VWL 77/8.2 IS) reads 32 registers from
+    // 0x2000 instead of 34.
+    base_register = this->last_read_start_reg_;
+  } else if (n_regs == 34) {  // fallback: no matching request seen yet
     base_register = 0x2000;
   } else if (n_regs == 98) {
     base_register = 0x2100;
