@@ -58,6 +58,8 @@ class AroThermModbus : public Component {
   void try_complete_adus_();
   void log_and_decode_(size_t len);
   std::string format_registers_(const uint8_t *data, size_t len);
+  // Start register and count of the most recent read request, used to
+  // attribute the following read response (which carries no address).
   uint16_t last_read_start_reg_{0};
   uint16_t last_read_count_{0};
   void decode_message_(const uint8_t *data, size_t len);
