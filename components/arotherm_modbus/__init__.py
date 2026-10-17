@@ -74,6 +74,11 @@ SENSORS = [
     SensorDef("building_pump_power", 0x1003, "div10", UNIT_PERCENT, DEVICE_CLASS_POWER_FACTOR, 1, "mdi:pump"),
     SensorDef("outside_temp", 0x1009, "d2c", UNIT_CELSIUS, DEVICE_CLASS_TEMPERATURE, 2, "mdi:thermometer"),
     SensorDef("requested_flow_temp", 0x1019, "d2c", UNIT_CELSIUS, DEVICE_CLASS_TEMPERATURE, 2, "mdi:thermometer"),
+
+    # aroTHERM Split plus (outdoor unit VWL 75/8.2, indoor unit VWL 77/8.2 IS):
+    # the indoor unit owns the flow meter and reports the flow here;
+    # 0x2014 (building_circuit_flow) always reads 0 on this combination.
+    SensorDef("building_circuit_flow_split", 0x100A, "raw", "l/h", None, 0, "mdi:pump"),
 ]
 
 _BY_KEY = {d.key: d for d in SENSORS}
