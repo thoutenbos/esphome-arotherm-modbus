@@ -93,6 +93,16 @@ arotherm_modbus:
   requested_flow_temp:
     name: "Requested Flow Temp"
 
+  # aroTHERM Split plus (outdoor VWL 75/8.2 + indoor VWL 77/8.2 IS): the
+  # indoor unit owns the water circuit, so remove water_pressure,
+  # building_circuit_flow, run_phase and requested_flow_temp above (they
+  # carry no data there) and use this instead - same id, so the calculated
+  # sensors below keep working. On a VWZ AI it reads the same as
+  # building_circuit_flow.
+  # building_circuit_flow_split:
+  #   id: building_circuit_flow
+  #   name: "Building Circuit Flow"
+
 # --- Calculated values -------------------
 sensor:
   - platform: template

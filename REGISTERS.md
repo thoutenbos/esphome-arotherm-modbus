@@ -13,10 +13,12 @@ Multiple Registers), a function-specific body, and a CRC-16 (poly
 `0xA001`, init `0xFFFF`). A read transaction is
 a short *request* (which registers, how many) followed by a *response*
 carrying the values - the response never repeats its own starting
-address, so the firmware (and this document) attributes a response's
-registers to the block by matching its *register count* against the
-counts below, the same technique `format_registers_()` and
-`decode_message_()` both rely on. A write transaction is a
+address, so the firmware attributes a response's registers to the read
+request seen just before it (its start register and count), in both
+`decode_message_()` and `format_registers_()`. Only a response with no
+matching request in front of it (the first one after boot, or one whose
+request was lost) falls back to matching its *register count* against the
+VWZ AI counts below. A write transaction is a
 request carrying the values themselves, acknowledged by an 8-byte echo of
 the address/count.
 
@@ -30,6 +32,25 @@ the address/count.
 | `0x2200` | read (`0x03`) | `0x2200` | 73 | 8-byte read request | 151-byte read response |
 
 All six repeat in a fixed order roughly once every 1.2s.
+
+The counts above are the **VWZ AI + aroTHERM 75/8.1** this map was built on.
+Other units carry the same layout with different block lengths:
+
+| block | VWZ AI + aroTHERM 75/8.1 | VWZ AI + aroTHERM plus 7 kW ([#2](https://github.com/thoutenbos/esphome-arotherm-modbus/issues/2)) | aroTHERM Split plus, VWL 75/8.2 + VWL 77/8.2 IS ([#3](https://github.com/thoutenbos/esphome-arotherm-modbus/pull/3)) |
+|---|---|---|---|
+| `0x1000` | 26 | 26 | 25 (ends at `0x1018`; no `0x1019`) |
+| `0x1100` | 15 | 15 | 14 |
+| `0x1200` | 25 | 25 | 24 |
+| `0x2000` | 34 | 35 (one extra register, `0x2022`) | 32 (ends at `0x201F`) |
+| `0x2100` | 98 | 98 | 98 |
+| `0x2200` | 73 | 73 | 73 |
+
+On both other units the registers that were checked (`0x2007`-`0x2011`,
+`0x212A`, `0x212C`, `0x211B`) decode with the offsets and scales below.
+The split unit's indoor unit owns the water side, so some `0x2000`
+registers are empty there: `0x2013` (water pressure) reads `0xFFFF`,
+`0x2014` (building circuit flow) always `0`, `0x2015` (run phase) `0` even
+with the compressor running - the flow is in `0x100A` instead.
 
 ## How to read the range rows
 
@@ -61,7 +82,7 @@ individually or inside exactly one such range; nothing is omitted.
 
 | register | offset | field / identity | `ebusd` match | scale | status | notes |
 |---|---|---|---|---|---|---|
-| `0x1000` | 0 | demand mode | — (no direct `ebusd` field; correlates with `RunDataStatuscode`'s state transitions) | raw integer (no scale) | **Confirmed** | published as `demand_mode`; not telemetry - the controller's own command (`0`=idle, `2`=DHW demand observed so far). Leads `ebusd`'s corresponding `RunDataStatuscode` report by 24-33s in the one full cycle observed |
+| `0x1000` | 0 | demand mode | — (no direct `ebusd` field; correlates with `RunDataStatuscode`'s state transitions) | raw integer (no scale) | **Confirmed** | published as `demand_mode`; not telemetry - the controller's own command (`0`=idle, `1`=space heating, `2`=DHW; `1` seen on the VWZ AI in the 2026-10-09 capture and confirmed on the Split plus). Leads `ebusd`'s corresponding `RunDataStatuscode` report by 24-33s in the one full cycle observed |
 | `0x1001` | 1 | unknown | — | — | Unknown | always `0x0000` this session |
 | `0x1002` | 2 | compressor speed (filtered/smoothed echo of `0x2010`) | `hmux0_rundatacompressorspeed` | `/10`, rps | **Confirmed (structural)** | leads `0x2010` smoothly by a couple of seconds during ramp-up but lags badly on the way down (distinct dynamics from the true target at `0x2122` not published |
 | `0x1003` | 3 | building pump power | `hmux0_rundatabuildingcpumppower` | `/10`, % | **Confirmed** | tracked point-for-point within ~1% at all 54 real timestamped `ebusd` values; first write-block field ever decoded and published |
@@ -71,13 +92,13 @@ individually or inside exactly one such range; nothing is omitted.
 | `0x1007` | 7 | flow temp (echo of `0x200C`) | `hmux0_rundataflowtemp` (and `ctlv3_hc1flowtemp`) | `/16` (D2C), °C | **Confirmed (structural)** | median diff 0.0625°C, p90 0.250°C; not published from here (would duplicate `flow_temp`) |
 | `0x1008` | 8 | return temp (echo of `0x200D`) | `hmux0_rundatareturntemp` | `/16` (D2C), °C | **Confirmed (structural)** | median diff 0.0625°C, p90 0.188°C; not published from here (would duplicate `return_temp`) |
 | `0x1009` | 9 | outside/ambient temperature | `hmux0_status01_temp_2` **and** `ctlv3_displayedoutsidetemp` | `/16` (D2C), °C | **Confirmed** | published as `outside_temp` |
-| `0x100A` | 10 | unknown, likely a building-circuit-flow echo | — (spurious match only against `BuildingCircuitFlow`, but same session-wide ceiling, `1219`, as the confirmed `0x2014`) | — | **Lead** | 84 distinct values, `0x0000`-`0x04C3` (0-1219) this session; overshoots to a peak then eases back down rather than holding a setpoint's flat step - read as another echo, not a request |
+| `0x100A` | 10 | building circuit flow | `hmux0_buildingcircuitflow` (via `0x2014`) | raw integer (no scale), l/h | **Confirmed** | published as `building_circuit_flow_split`. On the VWZ AI an exact echo of `0x2014`: identical to the `0x2014` read just before it in every one of ~79,000 `0x1000` writes across the 2026-09-06, 2026-09-10 and 2026-10-09 sessions (and in the #2 dump). On the aroTHERM Split plus the only flow reading (`0x2014` is always 0 there), matching the indoor unit's display: 1213 vs 1204 l/h space heating, 1397 vs 1392-1400 l/h hot water |
 | `0x100B`-`0x1011` | 11-17 (7 registers) | unknown | — | — | Unknown | constant at zero |
 | `0x1012` | 18 | unknown, secondary demand-cycle flag | — | — | **Confirmed (structural)** | steps within 1-2s of the primary demand echo (`0x2001`) at start; not published, meaning unclear |
 | `0x1013` | 19 | unknown | — | — | Unknown | constant at zero this session |
 | `0x1014` | 20 | unknown, tracks the demand cycle | — (soft lead only, `/100` against `RunDataBuildingCPumpPower`) | `/100`(soft lead) | **Lead** | 337 distinct values, `0x0000`-`0x1BF9` (0-7161) this session; non-zero only while `demand_mode` is active, decays with the stop-side ramp; not a confirmed identity |
 | `0x1015`-`0x1018` | 21-24 (4 registers) | unknown/placeholder | — | — | Unknown | constant all session (`0xFFFF` at 21-23, `0` at 24) |
-| `0x1019` | 25 | requested flow temperature | `hmux0_rundataflowtempdesired` | `/16` (D2C), °C | **Confirmed** | published as `requested_flow_temp`; a genuine setpoint (only 7 distinct raw values all session: idle ~20°C, a one-sample 75°C transient, then a steady 80°C for the whole DHW cycle, 0°C once demand clears) - steps in the same write message as `demand_mode` at both start and stop; matches `ebusd`'s `RunDataFlowTempDesired` (`"80"`) exactly |
+| `0x1019` | 25 | requested flow temperature (not on the Split plus, whose block is 25 registers) | `hmux0_rundataflowtempdesired` | `/16` (D2C), °C | **Confirmed** | published as `requested_flow_temp`; a genuine setpoint (only 7 distinct raw values all session: idle ~20°C, a one-sample 75°C transient, then a steady 80°C for the whole DHW cycle, 0°C once demand clears) - steps in the same write message as `demand_mode` at both start and stop; matches `ebusd`'s `RunDataFlowTempDesired` (`"80"`) exactly |
 
 ## Write block `0x1100` (15 registers, `0x1100`-`0x110E`)
 
@@ -104,7 +125,7 @@ commissioning), the same limitation as `0x2200`'s static registers.
 | register | offset | field / identity | `ebusd` match | scale | status | notes |
 |---|---|---|---|---|---|---|
 | `0x1200`-`0x1201` | 0-1 (2 registers) | unknown, not string content | — | — | Unknown | always `0xFFFF` (65535), each individually - not printable ASCII, so not part of the string below; likely framing |
-| `0x1202`-`0x1214` | 2-20 (19 registers) | ASCII serial/model string | — (no `ebusd` equivalent - this is a device identity string, not telemetry) | ASCII text | **Confirmed (structural)**, identity only | confirmed to carry a 25-character ASCII serial/model string which byte(s) of which register hold which character has not been individually mapped |
+| `0x1202`-`0x1214` | 2-20 (19 registers) | ASCII serial/model string | — (no `ebusd` equivalent - this is a device identity string, not telemetry) | ASCII text | **Confirmed (structural)**, identity only | carries the unit's ASCII serial number: 28 characters, `<`-padded to 35, from the low byte of `0x1203` through the low byte of `0x1214` (`0x1202` itself is `0x000A`). The captures under `tests/data/` have it overwritten with `0`s |
 | `0x1215`-`0x1218` | 21-24 (4 registers) | unknown, not string content | — | — | Unknown | constant all session, not all the same value: `0x0001` (1) at offset 21, `0x0000` (0) at 22-23, `0xFFFF` (65535) at 24 - none printable ASCII, so not part of the string above; likely framing |
 
 ## Read block `0x2000` (34 registers, `0x2000`-`0x2021`)
@@ -142,6 +163,7 @@ commissioning), the same limitation as `0x2200`'s static registers.
 | `0x201F` | 31 | unknown | — | — | Unknown | — (67 distinct values, `0x0000`-`0x2648` (0-9800); same correction as `0x201E`) |
 | `0x2020` | 32 | unknown | — | — | Unknown | — (94 distinct values, `0x0000`-`0x04B9` (0-1209); same correction as `0x201E`) |
 | `0x2021` | 33 | unknown, possibly a percentage/position | — | none tried beyond raw | **Lead** | — (79 distinct values, `0x0640`-`0x2D50` (1600-11600); idle value `1600` is `100.0` at `/16`, consistent with a percentage or position field, but not checked against any `ebusd` candidate over its full range) |
+| `0x2022` | 34 | unknown, only on the 35-register variant (aroTHERM plus 7 kW + VWZ AI, #2) | — | — | Unknown | — (`0xFFFF` throughout the one idle dump available) |
 
 ## Read block `0x2100` (98 registers, `0x2100`-`0x2161`)
 
@@ -225,7 +247,7 @@ commissioning), the same limitation as `0x2200`'s static registers.
 | `0x2223` | 35 | unknown | — | — | **Confirmed (structural)**, identity unknown | always `0x42F0` (17136) |
 | `0x2224` | 36 | unknown | — | — | **Confirmed (structural)**, identity unknown | always `0x0000` (0) |
 | `0x2225` | 37 | unknown | — | — | **Confirmed (structural)**, identity unknown | always `0x0032` (50) |
-| `0x2226`-`0x2246` | 38-70 (33 registers) | readback of write block `0x1200`'s payload | — | matches `0x1200` byte-for-byte, whatever that payload's own encoding is | **Confirmed (structural)** | same write-then-read-back relationship already established between `0x1000` and its matching read registers; includes the ASCII serial/model string bytes, since those live in `0x1200`'s payload |
+| `0x2226`-`0x2246` | 38-70 (33 registers) | readback of write block `0x1200`'s payload, then a second identity string | — | — | **Confirmed (structural)** | from the low byte of `0x2225` the same `<`-padded serial string as `0x1200` (35 characters), immediately followed by a second 32-character ASCII identity string (ending `...XX`) that `0x1200` does not carry - most likely the other unit's serial. Both are overwritten with `0`s in `tests/data/` |
 | `0x2247` | 71 | unknown | — | — | **Confirmed (structural)**, identity unknown | always `0x0001` (1) |
 | `0x2248` | 72 | unknown | — | — | **Confirmed (structural)**, identity unknown | always `0x0000` (0) |
 
