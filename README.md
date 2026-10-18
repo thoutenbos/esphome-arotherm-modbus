@@ -10,6 +10,15 @@ Confirmed against a **Vaillant VWZ AI <-> AroTHERM 75/8.1** installation
 units - see "Which heat pumps this applies to" below). The bus turned out
 to be genuine Modbus RTU carrying Vaillant's own register map, not eBUS.
 
+Also reported working on:
+
+- **aroTHERM plus 7 kW <-> VWZ AI** ([#2](https://github.com/thoutenbos/esphome-arotherm-modbus/issues/2)) -
+  reads one extra register in the `0x2000` block (35 instead of 34).
+- **aroTHERM Split plus: outdoor unit VWL 75/8.2 <-> indoor unit VWL 77/8.2 IS**
+  ([#3](https://github.com/thoutenbos/esphome-arotherm-modbus/pull/3)) -
+  shorter blocks, and the building circuit flow lives in a different
+  register. See "Differences between units" below for the config changes.
+
 > **[`REGISTERS.md`](REGISTERS.md)**: one table per
 > register block, every register's known identity/scale/`ebusd` mapping or
 > an explicit "unknown," covering the complete 271-register structure, not
@@ -82,9 +91,9 @@ pin works if you wire elsewhere.
 2. The `external_components:` block already points at this repository -
    pin `ref:` to a release tag once one exists, rather than tracking
    `main`, so an upstream change can't surprise a working install.
-3. Flash: `esphome run modbus-sniffer.yaml` (first flash needs a USB
+3. Flash: `esphome run arotherm-modbus.yaml` (first flash needs a USB
    cable; subsequent updates go out over Wi-Fi/OTA).
-3. Add the device in Home Assistant via the ESPHome integration as usual -
+4. Add the device in Home Assistant via the ESPHome integration as usual -
    it will expose the register-decoded sensors below plus 2 calculated
    sensors. Every sensor publishes nothing until a matching message has
    actually been seen since boot - no data right after a fresh flash is
@@ -93,7 +102,12 @@ pin works if you wire elsewhere.
 ## Decoded fields
 
 The firmware validates every reassembled message against the standard
-Modbus RTU CRC-16 and decodes by function code and register count.
+Modbus RTU CRC-16 and decodes it by function code. A write request names its
+own start register; a read response does not, so it is attributed to the
+read request seen just before it (start register and count). Only when no
+matching request was seen - right after boot, or if the request was lost -
+does it fall back to the VWZ AI block lengths (34 -> `0x2000`, 98 ->
+`0x2100`, 73 -> `0x2200`), and a response that matches neither is dropped.
 
 ![](sensors.png)
 
@@ -119,14 +133,39 @@ Modbus RTU CRC-16 and decodes by function code and register count.
 | `Subcooling` | `0x212A` | K, D2C (a temperature *difference*) |
 | `Superheat` | `0x212C` | K, D2C |
 | `Electric Power Consumption` | `0x211B` | W, raw integer |
-| `Building Circuit Flow` | `0x2014` | l/h, raw integer |
-| `Demand Mode` | `0x1000` (write block `0x1000`, offset 0) | not telemetry - the controller's own on/off command. `0`=idle, `2`=domestic-hot-water demand observed so far; other demand types (e.g. space heating) haven't been captured yet |
-| `Requested Flow Temp` | `0x1019` (write block `0x1000`) | °C, D2C - the flow-temperature setpoint bundled with the demand command above |
+| `Building Circuit Flow` | `0x2014` | l/h, raw integer. Always `0` on the aroTHERM Split plus - use `building_circuit_flow_split` there |
+| `Building Circuit Flow (Split)` (`building_circuit_flow_split`) | `0x100A` (write block `0x1000`) | l/h, raw integer. The same value as `0x2014` on the VWZ AI; the only flow reading on the aroTHERM Split plus, where the indoor unit owns the flow meter |
+| `Demand Mode` | `0x1000` (write block `0x1000`, offset 0) | not telemetry - the controller's own on/off command. `0`=idle, `1`=space heating, `2`=domestic hot water |
+| `Requested Flow Temp` | `0x1019` (write block `0x1000`) | °C, D2C - the flow-temperature setpoint bundled with the demand command above. Not present on the aroTHERM Split plus (its `0x1000` block ends at `0x1018`) |
 | `Run Phase` | `0x2015` | raw integer - a low-latency internal state code (`0`=idle, `1`=active, `6`=post-run) |
 
 Temperatures are eBUS's D2C convention (`degrees C = raw / 16`, signed
 16-bit big-endian) - the same fixed-point convention eBUS uses, even
 though the framing around it is genuine Modbus, not eBUS-derived.
+
+### Differences between units
+
+The register *layout* is the same on every unit seen so far; what differs is
+how many registers each block carries, and on the split unit which side
+owns the water circuit:
+
+| block | VWZ AI + aroTHERM 75/8.1 | VWZ AI + aroTHERM plus 7 kW | aroTHERM Split plus (VWL 75/8.2 + VWL 77/8.2 IS) |
+|---|---|---|---|
+| write `0x1000` | 26 | 26 | 25 |
+| write `0x1100` | 15 | 15 | 14 |
+| write `0x1200` | 25 | 25 | 24 |
+| read `0x2000` | 34 | 35 | 32 |
+| read `0x2100` | 98 | 98 | 98 |
+| read `0x2200` | 73 | 73 | 73 |
+
+Because read responses are attributed to their request, the different
+lengths need no configuration. On an **aroTHERM Split plus**, leave out
+`water_pressure` (`0x2013` reads `0xFFFF`), `building_circuit_flow`
+(`0x2014`, always 0), `run_phase` (`0x2015`, 0 even with the compressor
+running) and `requested_flow_temp` (`0x1019`, beyond the 25-register write
+block), and give `building_circuit_flow_split` the id `building_circuit_flow`
+so the calculated `Thermal Power Delivery` / `Heat Pump COP` keep working -
+see the commented block in [`arotherm-modbus.yaml`](arotherm-modbus.yaml).
 
 ### Calculated values
 
@@ -140,7 +179,9 @@ draw) (assumes pure water, not a glycol mix).
 
 ### What's not decoded yet
 
-271 registers exist across six blocks; 24 are published as sensors above.
+271 registers exist across six blocks on the VWZ AI; 25 sensors above are
+published from them (one, `building_circuit_flow_split`, mainly for the
+Split plus).
 The rest are either confirmed structural facts with no physical quantity
 to publish (echoes of an already-published register, placeholders, a
 static identity/config readback), a lead not yet solid enough to trust,
@@ -153,7 +194,29 @@ narrow these down, see [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
 Raw message logging stays on regardless of what's decoded as a sensor -
 every reassembled, CRC-valid message is logged at `DEBUG` with its hex
-dump and, for the two largest read blocks, a full per-register dump.
+dump and, for every write request and every read response that follows its
+own request, a full per-register dump (`regs=[2000=0000(0.00) ...]`, each
+value also shown at the D2C `/16` scale).
+
+The `0x1200` write block and the `0x2200` read block carry the indoor and
+outdoor units' serial numbers as ASCII, so a debug log contains them in
+clear text (in the hex dump and the `ascii=[...]` field). Scrub them before
+posting a log publicly - [`tests/tools/import_capture.py`](tests/tools/import_capture.py)
+does that for you.
+
+## Testing
+
+[`tests/`](tests/README.md) has a host-side test suite that compiles the
+real component C++ with stand-in ESPHome headers and replays real bus
+captures through it - framing, CRC, decoding and the debug log - against an
+independent Python reference decoder. It needs only Python 3 and g++/clang++:
+
+```
+python3 tests/run_tests.py
+```
+
+It runs on every push and pull request (GitHub Actions), together with
+`esphome config` on the example configuration.
 
 ## License
 
