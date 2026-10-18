@@ -55,6 +55,10 @@ class AroThermModbus : public Component {
   static constexpr int RX_PRESSURE_BYTES = 128;
   static bool looks_like_adu_start_(const std::vector<uint8_t> &adu);
   static size_t expected_adu_length_(const std::vector<uint8_t> &adu);
+  // One received byte: append it to the ADU being assembled and log/decode
+  // every ADU that completes. Everything after the UART goes through here,
+  // which is also where tests/harness.cpp feeds captured bytes in.
+  void process_byte_(uint8_t byte, uint32_t now_us);
   void try_complete_adus_();
   void log_and_decode_(size_t len);
   std::string format_registers_(const uint8_t *data, size_t len);

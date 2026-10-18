@@ -1,0 +1,191 @@
+[
+ {
+  "file": "issue-2_arotherm-plus-vwz-ai_idle.bin",
+  "unit": "aroTHERM plus 7 kW + VWZ AI",
+  "source": "GitHub issue #2 (raw_idle.txt, raw bytes from an RS-485 to Ethernet bridge)",
+  "description": "Standby. The 0x2000 block is read with 35 registers instead of 34.",
+  "expect": {
+   "shapes": {
+    "read-request 0x2000+35": 7,
+    "read-response 0x2000+35": 7
+   },
+   "published": [
+    "compressor_inlet_temp",
+    "compressor_outlet_temp",
+    "eev_outlet_temp",
+    "condensor_outlet_temp",
+    "air_inlet_temp",
+    "flow_temp",
+    "return_temp",
+    "low_pressure",
+    "high_pressure",
+    "compressor_speed",
+    "fan1_speed",
+    "water_pressure",
+    "building_circuit_flow",
+    "run_phase"
+   ],
+   "values": {
+    "flow_temp": 27.0625,
+    "return_temp": 26.75,
+    "water_pressure": 1.3,
+    "compressor_speed": 0,
+    "demand_mode": 0,
+    "building_circuit_flow": [
+     985,
+     993
+    ],
+    "outside_temp": 11.125
+   }
+  }
+ },
+ {
+  "file": "vwz-ai_boot.hex",
+  "unit": "aroTHERM 75/8.1 + VWZ AI",
+  "source": "HA capture 2026-09-10_105458",
+  "description": "First ADUs after the sniffer booted: a read response arrives before any read request has been seen.",
+  "expect": {
+   "shapes": {
+    "read-response 0x2100+98": 3
+   },
+   "values": {
+    "demand_mode": 0,
+    "compressor_speed": 0,
+    "electric_power_consumption": 6,
+    "flow_temp": [
+     16.125,
+     16.1875
+    ]
+   }
+  }
+ },
+ {
+  "file": "vwz-ai_idle.hex",
+  "unit": "aroTHERM 75/8.1 + VWZ AI",
+  "source": "HA capture 2026-09-08_122950",
+  "description": "Standby (demand_mode 0, compressor off), 3 poll cycles.",
+  "expect": {
+   "values": {
+    "demand_mode": 0,
+    "compressor_speed": 0,
+    "run_phase": 0,
+    "electric_power_consumption": 6,
+    "flow_temp": 17.0625,
+    "water_pressure": 1.4
+   }
+  }
+ },
+ {
+  "file": "vwz-ai_missed-request.hex",
+  "unit": "aroTHERM 75/8.1 + VWZ AI",
+  "source": "HA capture 2026-09-06_112859",
+  "description": "Standby; one cycle's 0x2100 read request was lost, so its 98-register response follows the 0x2000 request.",
+  "expect": {
+   "shapes": {
+    "read-request 0x2100+98": 4,
+    "read-response 0x2100+98": 5
+   },
+   "values": {
+    "electric_power_consumption": 6,
+    "eev_position": 250,
+    "flow_temp": 16.5625,
+    "compressor_speed": 0
+   }
+  }
+ },
+ {
+  "file": "vwz-ai_dhw-start.hex",
+  "unit": "aroTHERM 75/8.1 + VWZ AI",
+  "source": "HA capture 2026-09-10_105458",
+  "description": "Domestic hot water demand starts (demand_mode 0 -> 2), 8 poll cycles.",
+  "expect": {
+   "values": {
+    "demand_mode": [
+     0,
+     2
+    ],
+    "requested_flow_temp": [
+     20.375,
+     80
+    ],
+    "run_phase": [
+     0,
+     1
+    ],
+    "building_circuit_flow": [
+     0,
+     277
+    ]
+   }
+  }
+ },
+ {
+  "file": "vwz-ai_dhw-running.hex",
+  "unit": "aroTHERM 75/8.1 + VWZ AI",
+  "source": "HA capture 2026-09-10_105458",
+  "description": "Domestic hot water, compressor running, 3 poll cycles.",
+  "expect": {
+   "values": {
+    "demand_mode": 2,
+    "requested_flow_temp": 80,
+    "compressor_speed": 60,
+    "compressor_speed_target": 60,
+    "electric_power_consumption": [
+     1937,
+     1940
+    ],
+    "flow_temp": 55.9375,
+    "return_temp": 51.1875,
+    "high_pressure": 19.1
+   }
+  }
+ },
+ {
+  "file": "vwz-ai_dhw-stop.hex",
+  "unit": "aroTHERM 75/8.1 + VWZ AI",
+  "source": "HA capture 2026-09-10_105458",
+  "description": "Domestic hot water demand ends (demand_mode 2 -> 0), 8 poll cycles.",
+  "expect": {
+   "values": {
+    "demand_mode": [
+     0,
+     2
+    ],
+    "requested_flow_temp": [
+     0,
+     80
+    ],
+    "compressor_speed_target": [
+     0,
+     60
+    ],
+    "compressor_speed": [
+     53.4,
+     60
+    ]
+   }
+  }
+ },
+ {
+  "file": "vwz-ai_space-heating.hex",
+  "unit": "aroTHERM 75/8.1 + VWZ AI",
+  "source": "HA capture 2026-10-09_103808",
+  "description": "Space heating (demand_mode 1), compressor running, 3 poll cycles.",
+  "expect": {
+   "values": {
+    "demand_mode": 1,
+    "requested_flow_temp": 29,
+    "compressor_speed": [
+     75.1,
+     75.4
+    ],
+    "flow_temp": 29.8125,
+    "return_temp": 23.75,
+    "electric_power_consumption": [
+     1389,
+     1391
+    ]
+   }
+  }
+ }
+]

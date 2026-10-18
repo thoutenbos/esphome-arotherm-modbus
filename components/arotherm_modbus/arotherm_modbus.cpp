@@ -222,11 +222,7 @@ void AroThermModbus::loop() {
   uint32_t now;
   while (this->pop_byte_(&byte, &now)) {
     got_byte = true;
-    if (this->adu_.empty())
-      this->adu_start_us_ = now;
-    this->adu_.push_back(byte);
-    this->last_byte_us_ = now;
-    this->try_complete_adus_();
+    this->process_byte_(byte, now);
   }
 
   if (!got_byte && !this->adu_.empty() && this->now_us_() - this->last_byte_us_ > STUCK_ADU_TIMEOUT_US) {
@@ -234,6 +230,14 @@ void AroThermModbus::loop() {
              (unsigned) (STUCK_ADU_TIMEOUT_US / 1000), to_hex_(this->adu_.data(), this->adu_.size()).c_str());
     this->adu_.clear();
   }
+}
+
+void AroThermModbus::process_byte_(uint8_t byte, uint32_t now_us) {
+  if (this->adu_.empty())
+    this->adu_start_us_ = now_us;
+  this->adu_.push_back(byte);
+  this->last_byte_us_ = now_us;
+  this->try_complete_adus_();
 }
 
 bool AroThermModbus::looks_like_adu_start_(const std::vector<uint8_t> &adu) {

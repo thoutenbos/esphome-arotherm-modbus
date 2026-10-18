@@ -1,0 +1,195 @@
+{
+ "adus": 83,
+ "shapes": {
+  "read-request 0x2000+35": 7,
+  "read-request 0x2100+98": 7,
+  "read-request 0x2200+73": 7,
+  "read-response 0x2000+35": 7,
+  "read-response 0x2100+98": 6,
+  "read-response 0x2200+73": 7,
+  "write-ack 0x1000+26": 7,
+  "write-ack 0x1100+15": 7,
+  "write-ack 0x1200+25": 7,
+  "write-request 0x1000+26": 7,
+  "write-request 0x1100+15": 7,
+  "write-request 0x1200+25": 7
+ },
+ "sensors": {
+  "compressor_inlet_temp": {
+   "published": 7,
+   "first": 16.875,
+   "last": 16.875,
+   "min": 16.875,
+   "max": 16.875
+  },
+  "compressor_outlet_temp": {
+   "published": 7,
+   "first": 26.9375,
+   "last": 26.9375,
+   "min": 26.9375,
+   "max": 26.9375
+  },
+  "eev_outlet_temp": {
+   "published": 7,
+   "first": 12.4375,
+   "last": 12.375,
+   "min": 12.375,
+   "max": 12.4375
+  },
+  "condensor_outlet_temp": {
+   "published": 7,
+   "first": 21.125,
+   "last": 21.125,
+   "min": 21.125,
+   "max": 21.125
+  },
+  "air_inlet_temp": {
+   "published": 7,
+   "first": 11.375,
+   "last": 11.375,
+   "min": 11.375,
+   "max": 11.375
+  },
+  "flow_temp": {
+   "published": 7,
+   "first": 27.0625,
+   "last": 27.0625,
+   "min": 27.0625,
+   "max": 27.0625
+  },
+  "return_temp": {
+   "published": 7,
+   "first": 26.75,
+   "last": 26.75,
+   "min": 26.75,
+   "max": 26.75
+  },
+  "low_pressure": {
+   "published": 7,
+   "first": 5.5,
+   "last": 5.5,
+   "min": 5.5,
+   "max": 5.5
+  },
+  "high_pressure": {
+   "published": 7,
+   "first": 5.5,
+   "last": 5.5,
+   "min": 5.5,
+   "max": 5.5
+  },
+  "compressor_speed": {
+   "published": 7,
+   "first": 0.0,
+   "last": 0.0,
+   "min": 0.0,
+   "max": 0.0
+  },
+  "fan1_speed": {
+   "published": 7,
+   "first": 152.0,
+   "last": 153.0,
+   "min": 150.0,
+   "max": 153.0
+  },
+  "water_pressure": {
+   "published": 7,
+   "first": 1.3,
+   "last": 1.3,
+   "min": 1.3,
+   "max": 1.3
+  },
+  "building_circuit_flow": {
+   "published": 7,
+   "first": 991.0,
+   "last": 989.0,
+   "min": 985.0,
+   "max": 993.0
+  },
+  "run_phase": {
+   "published": 7,
+   "first": 1.0,
+   "last": 1.0,
+   "min": 1.0,
+   "max": 1.0
+  },
+  "electric_power_consumption": {
+   "published": 6,
+   "first": 6.0,
+   "last": 6.0,
+   "min": 6.0,
+   "max": 6.0
+  },
+  "eev_position": {
+   "published": 6,
+   "first": 250.0,
+   "last": 250.0,
+   "min": 250.0,
+   "max": 250.0
+  },
+  "compressor_speed_target": {
+   "published": 6,
+   "first": 0.0,
+   "last": 0.0,
+   "min": 0.0,
+   "max": 0.0
+  },
+  "subcooling": {
+   "published": 6,
+   "first": 0.0,
+   "last": 0.0,
+   "min": 0.0,
+   "max": 0.0
+  },
+  "superheat": {
+   "published": 6,
+   "first": 5.8125,
+   "last": 5.875,
+   "min": 5.8125,
+   "max": 5.875
+  },
+  "eev_position_status": {
+   "published": 6,
+   "first": 44.4,
+   "last": 44.4,
+   "min": 44.4,
+   "max": 44.4
+  },
+  "demand_mode": {
+   "published": 7,
+   "first": 0.0,
+   "last": 0.0,
+   "min": 0.0,
+   "max": 0.0
+  },
+  "building_pump_power": {
+   "published": 7,
+   "first": 70.1,
+   "last": 70.2,
+   "min": 70.1,
+   "max": 70.2
+  },
+  "outside_temp": {
+   "published": 7,
+   "first": 11.125,
+   "last": 11.125,
+   "min": 11.125,
+   "max": 11.125
+  },
+  "requested_flow_temp": {
+   "published": 7,
+   "first": 30.0,
+   "last": 30.0,
+   "min": 30.0,
+   "max": 30.0
+  },
+  "building_circuit_flow_split": {
+   "published": 7,
+   "first": 991.0,
+   "last": 989.0,
+   "min": 985.0,
+   "max": 993.0
+  }
+ },
+ "never_published": []
+}
