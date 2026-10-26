@@ -29,7 +29,8 @@ api_encryption_key: "%s"
 ota_password: test
 """
 
-SPLIT_PLUS_DROPPED = ("water_pressure", "building_circuit_flow", "run_phase", "requested_flow_temp")
+SPLIT_PLUS_DROPPED = ("water_pressure", "building_circuit_flow", "run_phase", "requested_flow_temp",
+                      "flow_rate_secondary")
 
 
 def local_source(text):

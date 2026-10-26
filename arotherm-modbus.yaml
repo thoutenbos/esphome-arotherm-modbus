@@ -49,6 +49,7 @@ arotherm_modbus:
   condensor_outlet_temp:
     name: "Condensor Outlet Temp"
   air_inlet_temp:
+    id: air_inlet_temp
     name: "Air Inlet Temp"
   outside_temp:
     name: "Outside Temp"
@@ -65,9 +66,12 @@ arotherm_modbus:
   water_pressure:
     name: "Water Pressure"
   compressor_speed:
+    id: compressor_speed
     name: "Compressor Speed"
   fan1_speed:
     name: "Fan1 Speed"
+  fan_speed_target:
+    name: "Fan Speed Target"
   building_pump_power:
     name: "Building Pump Power"
   eev_position:
@@ -80,23 +84,44 @@ arotherm_modbus:
     name: "Subcooling"
   superheat:
     name: "Superheat"
+  condensing_temp:
+    name: "Condensing Temp"
+  evaporating_temp:
+    name: "Evaporating Temp"
+  derated_temp_ceiling:
+    name: "Derated Temp Ceiling"
   electric_power_consumption:
     id: electric_power_consumption
     name: "Electric Power Consumption"
   building_circuit_flow:
     id: building_circuit_flow
     name: "Building Circuit Flow"
+  flow_rate_secondary:
+    name: "Flow Rate (secondary reading)"
   demand_mode:
     name: "Demand Mode"
   run_phase:
     name: "Run Phase"
   requested_flow_temp:
     name: "Requested Flow Temp"
+  demand_state:
+    name: "Demand State"
+  load_step:
+    name: "Load Step"
+  compressor_run_time:
+    name: "Compressor Run Time"
+  delta_t:
+    id: delta_t
+    name: "Delta T"
+  lockout_duration:
+    name: "Lockout Duration"
+  flow_return_calibration:
+    name: "Flow/Return Calibration"
 
   # aroTHERM Split plus (outdoor VWL 75/8.2 + indoor VWL 77/8.2 IS): the
   # indoor unit owns the water circuit, so remove water_pressure,
-  # building_circuit_flow, run_phase and requested_flow_temp above (they
-  # carry no data there) and use this instead - same id, so the calculated
+  # building_circuit_flow, run_phase, requested_flow_temp and
+  # flow_rate_secondary above (they carry no data there) and use this instead - same id, so the calculated
   # sensors below keep working. On a VWZ AI it reads the same as
   # building_circuit_flow.
   # building_circuit_flow_split:
@@ -114,13 +139,20 @@ sensor:
     state_class: measurement
     icon: "mdi:radiator"
     update_interval: 10s
+    # Uses delta_t, the heat pump's own uncalibrated flow/return
+    # differential, rather than flow_temp - return_temp: the pair carries the
+    # flow/return calibration the machine applies to itself, which made it
+    # read ~14% low against a certified heat meter at minimum modulation,
+    # where delta_t was within 1%. Falls back to the pair until delta_t has
+    # been seen (e.g. on a unit whose 0x2200 block does not carry it).
     lambda: |-
       float flow = id(building_circuit_flow).state;
-      float t_out = id(flow_temp).state;
-      float t_in = id(return_temp).state;
-      if (std::isnan(flow) || std::isnan(t_out) || std::isnan(t_in))
+      float dt = id(delta_t).state;
+      if (std::isnan(dt))
+        dt = id(flow_temp).state - id(return_temp).state;
+      if (std::isnan(flow) || std::isnan(dt))
         return {};
-      return flow * (t_out - t_in) * (4.186f / 3600.0f);
+      return flow * dt * (4.186f / 3600.0f);
 
   - platform: template
     name: "Heat Pump COP"
@@ -129,9 +161,49 @@ sensor:
     icon: "mdi:heat-pump-outline"
     state_class: measurement
     update_interval: 10s
+    # Unavailable rather than zero while the compressor is stopped: a COP has
+    # no value when nothing runs, and zeroes would drag every average and
+    # long-term statistic down.
     lambda: |-
       float thermal_kw = id(thermal_power_delivery).state;
       float electric_w = id(electric_power_consumption).state;
-      if (std::isnan(thermal_kw) || std::isnan(electric_w) || electric_w < 50.0f)
+      float rps = id(compressor_speed).state;
+      if (std::isnan(thermal_kw) || std::isnan(electric_w) || std::isnan(rps))
+        return {};
+      if (rps <= 0.0f || electric_w < 50.0f)
         return {};
       return (thermal_kw * 1000.0f) / electric_w;
+
+  # Second-law efficiency: how much of the thermodynamic ceiling the machine
+  # reaches. Carnot COP is the best any heat pump could do between the same
+  # two temperatures, T_hot / (T_hot - T_cold) in kelvin, so this ratio takes
+  # the weather and the flow temperature out and leaves the machine's own
+  # quality. Real air-source units sit around 30-50%.
+  #
+  # T_hot is the mean of flow and return, the sink temperature the condenser
+  # works against; T_cold is the air inlet, what the evaporator actually sees
+  # (outside_temp is a damped controller value). It chains off Heat Pump COP,
+  # so it inherits that sensor's delta_t basis and is unavailable while the
+  # compressor is stopped.
+  - platform: template
+    name: "Carnot Efficiency"
+    id: carnot_efficiency
+    unit_of_measurement: "%"
+    accuracy_decimals: 1
+    state_class: measurement
+    icon: "mdi:gauge-full"
+    update_interval: 10s
+    lambda: |-
+      float cop = id(heat_pump_cop).state;
+      float t_flow = id(flow_temp).state;
+      float t_ret = id(return_temp).state;
+      float t_air = id(air_inlet_temp).state;
+      if (std::isnan(cop) || std::isnan(t_flow) || std::isnan(t_ret) || std::isnan(t_air))
+        return {};
+      if (cop <= 0.0f)
+        return {};
+      float t_hot = (t_flow + t_ret) * 0.5f + 273.15f;
+      float lift = t_hot - (t_air + 273.15f);
+      if (lift < 1.0f)
+        return {};
+      return 100.0f * cop / (t_hot / lift);

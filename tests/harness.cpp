@@ -62,8 +62,12 @@ AroThermModbus::Scale parse_scale(const std::string &s) {
     return AroThermModbus::Scale::RAW;
   if (s == "DIV10")
     return AroThermModbus::Scale::DIV10;
+  if (s == "DIV100")
+    return AroThermModbus::Scale::DIV100;
   if (s == "D2C")
     return AroThermModbus::Scale::D2C;
+  if (s == "F32")
+    return AroThermModbus::Scale::F32;
   fprintf(stderr, "unknown scale %s\n", s.c_str());
   exit(2);
 }

@@ -27,7 +27,7 @@ covered automatically.
 
 | check | what it catches |
 |---|---|
-| **unit** - [`unit_cases.py`](unit_cases.py) | one scenario per decoding rule with the expected publishes written out: request attribution for 32/34/35-register `0x2000` blocks, the count fallback after boot or a lost request, dropping what can't be placed, signed values, the `0x1000` write block with and without `0x1019`, CRC errors, line noise, byte-at-a-time arrival |
+| **unit** - [`unit_cases.py`](unit_cases.py) | one scenario per decoding rule with the expected publishes written out: request attribution for 32/34/35-register `0x2000` blocks, the count fallback after boot or a lost request, dropping what can't be placed, signed values, every scale (raw, `/10`, `/100`, D2C and the 32-bit floats of the `0x2200` block - including a float cut off by the end of its block and one that decodes to NaN/infinity), the `0x1000` write block with and without `0x1019`, the `0x1100` block's calibration, CRC errors, line noise, byte-at-a-time arrival |
 | **framing** | every dataset, fed as one byte stream with no timing cues, must frame into exactly the ADUs it holds - and again with junk injected between every ADU |
 | **decode** | every ADU must publish exactly what the reference decoder says: same sensors, same order, same values (to 1e-4) |
 | **debug log** | the `regs=[...]` dump must match the reference's formatting of the same registers |

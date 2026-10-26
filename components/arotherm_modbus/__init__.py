@@ -8,6 +8,7 @@ from esphome.components import sensor, time
 from esphome.const import (
     CONF_ID,
     CONF_TIME_ID,
+    DEVICE_CLASS_DURATION,
     DEVICE_CLASS_POWER,
     DEVICE_CLASS_POWER_FACTOR,
     DEVICE_CLASS_PRESSURE,
@@ -35,14 +36,15 @@ CONF_BAUD_RATE = "baud_rate"
 class SensorDef:
     key: str
     register: int
-    scale: str  # "raw", "div10", or "d2c" - see AroThermModbus::Scale
+    scale: str  # "raw", "div10", "div100", "d2c" or "f32" - see AroThermModbus::Scale
     unit: str | None = None
     device_class: str | None = None
     accuracy_decimals: int = 2
     icon: str = "mdi:help-circle-outline"
 
 
-_SCALE_CODE = {"raw": Scale.RAW, "div10": Scale.DIV10, "d2c": Scale.D2C}
+_SCALE_CODE = {"raw": Scale.RAW, "div10": Scale.DIV10, "div100": Scale.DIV100,
+               "d2c": Scale.D2C, "f32": Scale.F32}
 
 SENSORS = [
     # 0x2000 block (34-register read response)
@@ -60,25 +62,36 @@ SENSORS = [
     SensorDef("water_pressure", 0x2013, "div10", "bar", DEVICE_CLASS_PRESSURE, 2, "mdi:gauge"),
     SensorDef("building_circuit_flow", 0x2014, "raw", "l/h", None, 0, "mdi:pump"),
     SensorDef("run_phase", 0x2015, "raw", None, None, 0, "mdi:state-machine"),
+    SensorDef("load_step", 0x201C, "div100", UNIT_PERCENT, None, 0, "mdi:gauge"),
+    SensorDef("flow_rate_secondary", 0x2020, "raw", "l/h", None, 0, "mdi:water-sync"),
 
     # 0x2100 block (98-register read response)
     SensorDef("electric_power_consumption", 0x211B, "raw", UNIT_WATT, DEVICE_CLASS_POWER, 0, "mdi:lightning-bolt"),
     SensorDef("eev_position", 0x2120, "raw", "deg", None, 0, "mdi:valve"),
     SensorDef("compressor_speed_target", 0x2122, "div10", "rps", None, 1, "mdi:sync-circle"),
+    SensorDef("fan_speed_target", 0x2123, "raw", "rpm", None, 0, "mdi:fan-clock"),
+    SensorDef("condensing_temp", 0x2126, "d2c", UNIT_CELSIUS, DEVICE_CLASS_TEMPERATURE, 2, "mdi:thermometer-chevron-up"),
+    SensorDef("evaporating_temp", 0x2128, "d2c", UNIT_CELSIUS, DEVICE_CLASS_TEMPERATURE, 2, "mdi:snowflake-thermometer"),
     SensorDef("subcooling", 0x212A, "d2c", "K", DEVICE_CLASS_TEMPERATURE, 2, "mdi:thermometer"),
     SensorDef("superheat", 0x212C, "d2c", "K", DEVICE_CLASS_TEMPERATURE, 2, "mdi:thermometer"),
     SensorDef("eev_position_status", 0x212D, "div10", UNIT_PERCENT, None, 1, "mdi:valve"),
+    SensorDef("derated_temp_ceiling", 0x2137, "d2c", UNIT_CELSIUS, DEVICE_CLASS_TEMPERATURE, 2, "mdi:arrow-collapse-down"),
+    SensorDef("demand_state", 0x2144, "raw", None, None, 0, "mdi:ray-start-end"),
+    SensorDef("compressor_run_time", 0x2146, "raw", "s", DEVICE_CLASS_DURATION, 0, "mdi:timer-play-outline"),
+
+    # 0x2200 block (73-register read response)
+    SensorDef("delta_t", 0x2209, "f32", "K", DEVICE_CLASS_TEMPERATURE, 3, "mdi:delta"),
+    SensorDef("lockout_duration", 0x221D, "f32", "s", DEVICE_CLASS_DURATION, 0, "mdi:timer-lock-outline"),
 
     # 0x1000 block (26-register write request)
     SensorDef("demand_mode", 0x1000, "raw", None, None, 0, "mdi:motion-play-outline"),
     SensorDef("building_pump_power", 0x1003, "div10", UNIT_PERCENT, DEVICE_CLASS_POWER_FACTOR, 1, "mdi:pump"),
     SensorDef("outside_temp", 0x1009, "d2c", UNIT_CELSIUS, DEVICE_CLASS_TEMPERATURE, 2, "mdi:thermometer"),
     SensorDef("requested_flow_temp", 0x1019, "d2c", UNIT_CELSIUS, DEVICE_CLASS_TEMPERATURE, 2, "mdi:thermometer"),
-
-    # aroTHERM Split plus (outdoor unit VWL 75/8.2, indoor unit VWL 77/8.2 IS):
-    # the indoor unit owns the flow meter and reports the flow here;
-    # 0x2014 (building_circuit_flow) always reads 0 on this combination.
     SensorDef("building_circuit_flow_split", 0x100A, "raw", "l/h", None, 0, "mdi:pump"),
+
+    # 0x1100 block (15-register write request)
+    SensorDef("flow_return_calibration", 0x1109, "d2c", "K", DEVICE_CLASS_TEMPERATURE, 4, "mdi:tune-variant"),
 ]
 
 _BY_KEY = {d.key: d for d in SENSORS}

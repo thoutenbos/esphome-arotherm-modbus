@@ -7,6 +7,8 @@ edges that real traffic only hits by chance.
 A case is a list of byte chunks fed in order (with a bus-idle gap between
 chunks) and the exact (sensor key, value) publishes expected, in order.
 """
+import struct
+
 from modbus_ref import with_crc
 
 
@@ -43,6 +45,7 @@ def expect_2000(n):
     d2c = lambda i: i + 1 / 16  # noqa: E731
     raw = lambda i: float(i * 16 + 1)  # noqa: E731
     div10 = lambda i: (i * 16 + 1) / 10  # noqa: E731
+    div100 = lambda i: (i * 16 + 1) / 100  # noqa: E731
     table = [
         ("compressor_inlet_temp", 0x07, d2c), ("compressor_outlet_temp", 0x08, d2c),
         ("eev_outlet_temp", 0x09, d2c), ("condensor_outlet_temp", 0x0A, d2c),
@@ -50,6 +53,7 @@ def expect_2000(n):
         ("low_pressure", 0x0E, div10), ("high_pressure", 0x0F, div10),
         ("compressor_speed", 0x10, div10), ("fan1_speed", 0x11, raw),
         ("water_pressure", 0x13, div10), ("building_circuit_flow", 0x14, raw), ("run_phase", 0x15, raw),
+        ("load_step", 0x1C, div100), ("flow_rate_secondary", 0x20, raw),
     ]
     return [(k, f(off)) for k, off, f in table if off < n]
 
@@ -59,16 +63,42 @@ def block_2100():
     regs[0x1B] = 1234       # electric_power_consumption, W
     regs[0x20] = 350        # eev_position
     regs[0x22] = 456        # compressor_speed_target, 45.6 rps
+    regs[0x23] = 610        # fan_speed_target, rpm
+    regs[0x26] = 600        # condensing_temp 37.5 C
+    regs[0x28] = 0xFFB0     # evaporating_temp -5.0 C (signed)
     regs[0x2A] = 60         # subcooling 3.75 K
     regs[0x2C] = 0xFFDA     # superheat -2.375 K (signed)
     regs[0x2D] = 0xFF9C     # eev_position_status -10.0 % (signed)
+    regs[0x37] = 1276       # derated_temp_ceiling 79.75 C
+    regs[0x44] = 3          # demand_state: running
+    regs[0x46] = 2373       # compressor_run_time, s
     return regs
 
 
 EXPECT_2100 = [
     ("electric_power_consumption", 1234.0), ("eev_position", 350.0), ("compressor_speed_target", 45.6),
+    ("fan_speed_target", 610.0), ("condensing_temp", 37.5), ("evaporating_temp", -5.0),
     ("subcooling", 3.75), ("superheat", -2.375), ("eev_position_status", -10.0),
+    ("derated_temp_ceiling", 79.75), ("demand_state", 3.0), ("compressor_run_time", 2373.0),
 ]
+
+
+def f32_regs(value):
+    """The two registers (high word first) of a big-endian IEEE-754 single."""
+    raw = struct.unpack(">HH", struct.pack(">f", value))
+    return list(raw)
+
+
+def block_2200(delta_t=1.8125, lockout=480.0, n=73):
+    regs = [0] * 73
+    regs[0x09:0x0B] = f32_regs(delta_t)   # delta_t, K
+    regs[0x1D:0x1F] = f32_regs(lockout)   # lockout_duration, s
+    return regs[:n]
+
+
+def block_1100(calibration=0xFFFB):
+    regs = [0, 300, 18000, 16, 0x8001, 0, 0, 0, 0, calibration, 0, 1, 1, 0, 0]
+    return regs
 
 
 def block_1000(n=26):
@@ -88,6 +118,37 @@ EXPECT_1000 = [
 ]
 
 CASES = [
+    {
+        "name": "0x2200 block: delta_t and lockout_duration are 32-bit floats over two registers",
+        "chunks": [request(0x2200, 73), response(block_2200())],
+        "publish": [("delta_t", 1.8125), ("lockout_duration", 480.0)],
+    },
+    {
+        "name": "a float whose low word falls outside the block is not published",
+        # A 10-register read of 0x2200 ends at 0x2209, the float's high word.
+        "chunks": [request(0x2200, 10), response(block_2200(n=10))],
+        "publish": [],
+    },
+    {
+        "name": "a float that decodes to NaN or infinity is not published",
+        "chunks": [request(0x2200, 73), response(block_2200(delta_t=float("nan"), lockout=float("inf")))],
+        "publish": [],
+    },
+    {
+        "name": "negative float, and a 73-register response with no request falls back to 0x2200",
+        "chunks": [response(block_2200(delta_t=-0.0625))],
+        "publish": [("delta_t", -0.0625), ("lockout_duration", 480.0)],
+    },
+    {
+        "name": "0x1100 write block: flow_return_calibration is signed and /16 (-5 -> -0.3125 K)",
+        "chunks": [write(0x1100, block_1100()), write_ack(0x1100, 15)],
+        "publish": [("flow_return_calibration", -0.3125)],
+    },
+    {
+        "name": "0x1100 write block with 14 registers (Split plus) still carries the calibration",
+        "chunks": [write(0x1100, block_1100(0)[:14]), write_ack(0x1100, 14)],
+        "publish": [("flow_return_calibration", 0.0)],
+    },
     {
         "name": "read response attributed to its request (VWZ AI, 34 registers)",
         "chunks": [request(0x2000, 34), response(block_2000(34))],

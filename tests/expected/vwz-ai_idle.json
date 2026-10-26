@@ -113,6 +113,20 @@
    "min": 0.0,
    "max": 0.0
   },
+  "load_step": {
+   "published": 3,
+   "first": 0.0,
+   "last": 0.0,
+   "min": 0.0,
+   "max": 0.0
+  },
+  "flow_rate_secondary": {
+   "published": 3,
+   "first": 0.0,
+   "last": 0.0,
+   "min": 0.0,
+   "max": 0.0
+  },
   "electric_power_consumption": {
    "published": 3,
    "first": 6.0,
@@ -134,6 +148,27 @@
    "min": 0.0,
    "max": 0.0
   },
+  "fan_speed_target": {
+   "published": 3,
+   "first": 0.0,
+   "last": 0.0,
+   "min": 0.0,
+   "max": 0.0
+  },
+  "condensing_temp": {
+   "published": 3,
+   "first": 14.8125,
+   "last": 14.8125,
+   "min": 14.8125,
+   "max": 14.8125
+  },
+  "evaporating_temp": {
+   "published": 3,
+   "first": 15.8125,
+   "last": 15.8125,
+   "min": 15.8125,
+   "max": 15.8125
+  },
   "subcooling": {
    "published": 3,
    "first": 0.0,
@@ -154,6 +189,41 @@
    "last": 44.4,
    "min": 44.4,
    "max": 44.4
+  },
+  "derated_temp_ceiling": {
+   "published": 3,
+   "first": 80.0,
+   "last": 80.0,
+   "min": 80.0,
+   "max": 80.0
+  },
+  "demand_state": {
+   "published": 3,
+   "first": 0.0,
+   "last": 0.0,
+   "min": 0.0,
+   "max": 0.0
+  },
+  "compressor_run_time": {
+   "published": 3,
+   "first": 0.0,
+   "last": 0.0,
+   "min": 0.0,
+   "max": 0.0
+  },
+  "delta_t": {
+   "published": 3,
+   "first": -0.1389,
+   "last": -0.1389,
+   "min": -0.1389,
+   "max": -0.1389
+  },
+  "lockout_duration": {
+   "published": 3,
+   "first": 480.0,
+   "last": 480.0,
+   "min": 480.0,
+   "max": 480.0
   },
   "demand_mode": {
    "published": 3,
@@ -184,6 +254,13 @@
    "max": 20.75
   },
   "building_circuit_flow_split": {
+   "published": 3,
+   "first": 0.0,
+   "last": 0.0,
+   "min": 0.0,
+   "max": 0.0
+  },
+  "flow_return_calibration": {
    "published": 3,
    "first": 0.0,
    "last": 0.0,

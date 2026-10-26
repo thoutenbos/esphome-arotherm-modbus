@@ -24,7 +24,10 @@ class AroThermModbus : public Component {
   enum class Scale : uint8_t {
     RAW,
     DIV10,
+    DIV100,
     D2C,
+    // Big-endian IEEE-754 single spanning THIS register and the next one.
+    F32,
   };
 
   void add_sensor(uint16_t register_address, Scale scale, sensor::Sensor *sensor) {

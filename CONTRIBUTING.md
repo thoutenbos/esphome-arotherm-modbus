@@ -1,7 +1,7 @@
 # Contributing
 
 This component decodes a Modbus RTU link for Vaillant heatpumps. 
-25 of 271 registers are published as sensors; the rest range from
+36 sensors are published from the 271 registers; the rest range from
 "confirmed real but not decoded" down to "genuinely unknown" - see
 [`REGISTERS.md`](REGISTERS.md) for the complete picture, including the
 exact value range observed for every still-unidentified register. If you
