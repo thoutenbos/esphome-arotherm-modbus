@@ -23,7 +23,9 @@
     "fan1_speed",
     "water_pressure",
     "building_circuit_flow",
-    "run_phase"
+    "run_phase",
+    "load_step",
+    "flow_rate_secondary"
    ],
    "values": {
     "flow_temp": 27.0625,
@@ -35,7 +37,11 @@
      985,
      993
     ],
-    "outside_temp": 11.125
+    "outside_temp": 11.125,
+    "lockout_duration": 480,
+    "flow_return_calibration": 0.3125,
+    "load_step": 0,
+    "demand_state": 0
    }
   }
  },
@@ -71,7 +77,13 @@
     "run_phase": 0,
     "electric_power_consumption": 6,
     "flow_temp": 17.0625,
-    "water_pressure": 1.4
+    "water_pressure": 1.4,
+    "lockout_duration": 480,
+    "demand_state": 0,
+    "compressor_run_time": 0,
+    "flow_rate_secondary": 0,
+    "flow_return_calibration": 0,
+    "derated_temp_ceiling": 80
    }
   }
  },
@@ -115,6 +127,10 @@
     "building_circuit_flow": [
      0,
      277
+    ],
+    "demand_state": [
+     0,
+     1
     ]
    }
   }
@@ -136,7 +152,18 @@
     ],
     "flow_temp": 55.9375,
     "return_temp": 51.1875,
-    "high_pressure": 19.1
+    "high_pressure": 19.1,
+    "demand_state": 3,
+    "load_step": 84,
+    "fan_speed_target": 650,
+    "delta_t": [
+     4.72,
+     4.76
+    ],
+    "compressor_run_time": [
+     2940,
+     2942
+    ]
    }
   }
  },
@@ -162,6 +189,14 @@
     "compressor_speed": [
      53.4,
      60
+    ],
+    "demand_state": [
+     3,
+     4
+    ],
+    "compressor_run_time": [
+     0,
+     5445
     ]
    }
   }
@@ -184,7 +219,15 @@
     "electric_power_consumption": [
      1389,
      1391
-    ]
+    ],
+    "demand_state": 3,
+    "flow_return_calibration": -0.25,
+    "delta_t": [
+     6.37,
+     6.4
+    ],
+    "evaporating_temp": 2.875,
+    "condensing_temp": 30.25
    }
   }
  }

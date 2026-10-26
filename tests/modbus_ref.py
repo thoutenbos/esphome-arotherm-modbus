@@ -16,8 +16,10 @@ tests/data/ (see tools/import_capture.py).
 from __future__ import annotations
 
 import ast
+import math
 import os
 import re
+import struct
 from dataclasses import dataclass
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -112,7 +114,7 @@ def classify(adu: bytes, last_request: tuple[int, int] | None = None) -> str:
 class SensorSpec:
     key: str
     register: int
-    scale: str  # "raw" | "div10" | "d2c"
+    scale: str  # "raw" | "div10" | "div100" | "d2c" | "f32"
 
 
 def load_sensors(path: str = COMPONENT_INIT) -> list[SensorSpec]:
@@ -133,12 +135,19 @@ def signed16(raw: int) -> int:
     return raw - 0x10000 if raw & 0x8000 else raw
 
 
+def float32_of(high: int, low: int) -> float:
+    """Big-endian IEEE-754 single from two registers, high word first."""
+    return struct.unpack(">f", struct.pack(">HH", high, low))[0]
+
+
 def scale_value(scale: str, raw: int) -> float:
     v = signed16(raw)
     if scale == "d2c":
         return v / 16.0
     if scale == "div10":
         return v / 10.0
+    if scale == "div100":
+        return v / 100.0
     if scale == "raw":
         return float(v)
     raise ValueError(scale)
@@ -200,11 +209,21 @@ class ReferenceDecoder:
         if block is None:
             return [], ""
         start, regs = block
-        publishes = [
-            (s.key, scale_value(s.scale, regs[s.register - start]))
-            for s in self.sensors
-            if start <= s.register < start + len(regs)
-        ]
+        publishes = []
+        for s in self.sensors:
+            i = s.register - start
+            if not 0 <= i < len(regs):
+                continue
+            if s.scale == "f32":
+                # spans this register and the next; nothing if the block
+                # ends in between or the bits are not a finite number
+                if i + 1 >= len(regs):
+                    continue
+                v = float32_of(regs[i], regs[i + 1])
+                if math.isfinite(v):
+                    publishes.append((s.key, v))
+                continue
+            publishes.append((s.key, scale_value(s.scale, regs[i])))
         # The debug dump only names registers it can place with certainty:
         # a read response needs the matching request seen just before it.
         dump = ""
@@ -217,7 +236,7 @@ class ReferenceDecoder:
 # Serial-number scrubbing
 
 # A Vaillant serial / identity string on this bus: a long run of digits and
-# capitals (optionally '<'-padded), e.g. "21262780000495163133810546N8<<<<<<<".
+# capitals (optionally '<'-padded), e.g. "21123456789012345678901234N8<<<<<<<" (made up).
 SERIAL_RUN = re.compile(rb"[0-9A-Z<]{12,}")
 REDACTED_CHAR = ord("0")
 

@@ -2,6 +2,9 @@
 #include "esphome/core/log.h"
 #include "esphome/core/hal.h"
 
+#include <cmath>
+#include <cstring>
+
 #ifdef USE_ESP32
 #include "driver/uart.h"
 #include "hal/uart_ll.h"
@@ -374,6 +377,8 @@ float AroThermModbus::scale_value_(Scale scale, int32_t raw) {
   switch (scale) {
     case Scale::DIV10:
       return raw / 10.0f;
+    case Scale::DIV100:
+      return raw / 100.0f;
     case Scale::D2C:
       return raw / 16.0f;
     case Scale::RAW:
@@ -388,6 +393,18 @@ void AroThermModbus::publish_block_(const uint8_t *data, size_t header_len, uint
       continue;
     const size_t offset = rs.register_address - base_register;
     const size_t byte_off = header_len + ADU_REGISTER_FIELD_LEN * offset;
+    if (rs.scale == Scale::F32) {
+      // Needs this register and the next, so it must not run off the block.
+      if (offset + 1 >= count)
+        continue;
+      const uint32_t bits = ((uint32_t) data[byte_off] << 24) | ((uint32_t) data[byte_off + 1] << 16) |
+                            ((uint32_t) data[byte_off + 2] << 8) | (uint32_t) data[byte_off + 3];
+      float value;
+      memcpy(&value, &bits, sizeof(value));
+      if (std::isfinite(value))
+        rs.sensor->publish_state(value);
+      continue;
+    }
     const int32_t raw = (int16_t) ((data[byte_off] << 8) | data[byte_off + 1]);
     rs.sensor->publish_state(scale_value_(rs.scale, raw));
   }
