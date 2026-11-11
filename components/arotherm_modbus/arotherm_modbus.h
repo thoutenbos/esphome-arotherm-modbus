@@ -7,6 +7,7 @@
 
 #include "esphome/core/component.h"
 #include "esphome/components/sensor/sensor.h"
+#include "esphome/components/text_sensor/text_sensor.h"
 #include "esphome/components/time/real_time_clock.h"
 
 namespace esphome {
@@ -23,8 +24,13 @@ class AroThermModbus : public Component {
 
   enum class Scale : uint8_t {
     RAW,
+    // As RAW, but the register is read as unsigned: timers and powers that
+    // run past 32,767.
+    URAW,
     DIV10,
+    DIV50,
     DIV100,
+    DIV1000,
     D2C,
     // Big-endian IEEE-754 single spanning THIS register and the next one.
     F32,
@@ -32,6 +38,21 @@ class AroThermModbus : public Component {
 
   void add_sensor(uint16_t register_address, Scale scale, sensor::Sensor *sensor) {
     this->sensors_.push_back({register_address, scale, sensor});
+  }
+
+  // Registers published as text rather than as a number.
+  enum class TextKind : uint8_t {
+    // Three consecutive registers, "major.minor.patch".
+    FIRMWARE_VERSION,
+    // The compressor ramp bitfield at 0x214E, spelled out.
+    COMPRESSOR_RAMP_STATE,
+    // 28 ASCII characters: the low byte of this register, then both bytes of
+    // each of the next 17, padded with '<'.
+    SERIAL_NUMBER,
+  };
+
+  void add_text_sensor(uint16_t register_address, TextKind kind, text_sensor::TextSensor *sensor) {
+    this->text_sensors_.push_back({register_address, kind, sensor, false, ""});
   }
 
  protected:
@@ -72,6 +93,7 @@ class AroThermModbus : public Component {
   void decode_message_(const uint8_t *data, size_t len);
   void publish_block_(const uint8_t *data, size_t header_len, uint16_t base_register, size_t count);
   static float scale_value_(Scale scale, int32_t raw);
+  static std::string ramp_state_text_(uint16_t raw);
   static uint16_t crc16_modbus_(const uint8_t *data, size_t len);
   static bool modbus_crc_valid_(const uint8_t *data, size_t len);
 
@@ -121,6 +143,17 @@ class AroThermModbus : public Component {
     sensor::Sensor *sensor;
   };
   std::vector<RegisterSensor> sensors_;
+
+  // Text is published on change only: the bus repeats every register about
+  // once a second, and a state string that has not moved is not news.
+  struct RegisterTextSensor {
+    uint16_t register_address;
+    TextKind kind;
+    text_sensor::TextSensor *sensor;
+    bool published;
+    std::string last;
+  };
+  std::vector<RegisterTextSensor> text_sensors_;
 };
 
 }  // namespace arotherm_modbus

@@ -15,6 +15,90 @@
   "write-request 0x1200+25": 4
  },
  "sensors": {
+  "demand_mode": {
+   "published": 6,
+   "first": 0.0,
+   "last": 0.0,
+   "min": 0.0,
+   "max": 0.0
+  },
+  "building_pump_power": {
+   "published": 6,
+   "first": 0.0,
+   "last": 0.0,
+   "min": 0.0,
+   "max": 0.0
+  },
+  "outside_temp": {
+   "published": 6,
+   "first": 21.0,
+   "last": 21.0,
+   "min": 21.0,
+   "max": 21.0
+  },
+  "building_circuit_flow_split": {
+   "published": 6,
+   "first": 0.0,
+   "last": 0.0,
+   "min": 0.0,
+   "max": 0.0
+  },
+  "hot_water_mode_active": {
+   "published": 6,
+   "first": 0.0,
+   "last": 0.0,
+   "min": 0.0,
+   "max": 0.0
+  },
+  "heat_output": {
+   "published": 6,
+   "first": 0.0,
+   "last": 0.0,
+   "min": 0.0,
+   "max": 0.0
+  },
+  "requested_flow_temp": {
+   "published": 6,
+   "first": 20.1875,
+   "last": 20.1875,
+   "min": 20.1875,
+   "max": 20.1875
+  },
+  "flow_return_calibration": {
+   "published": 6,
+   "first": 0.0,
+   "last": 0.0,
+   "min": 0.0,
+   "max": 0.0
+  },
+  "building_circuit_flow_target": {
+   "published": 6,
+   "first": 0.0,
+   "last": 0.0,
+   "min": 0.0,
+   "max": 0.0
+  },
+  "compressor_speed_max": {
+   "published": 6,
+   "first": 0.0,
+   "last": 0.0,
+   "min": 0.0,
+   "max": 0.0
+  },
+  "compressor_speed_min": {
+   "published": 6,
+   "first": 0.0,
+   "last": 0.0,
+   "min": 0.0,
+   "max": 0.0
+  },
+  "defrost_sequence": {
+   "published": 6,
+   "first": 0.0,
+   "last": 0.0,
+   "min": 0.0,
+   "max": 0.0
+  },
   "compressor_inlet_temp": {
    "published": 6,
    "first": 16.875,
@@ -113,14 +197,14 @@
    "min": 0.0,
    "max": 0.0
   },
-  "load_step": {
+  "mains_voltage": {
    "published": 6,
    "first": 0.0,
    "last": 0.0,
    "min": 0.0,
    "max": 0.0
   },
-  "flow_rate_secondary": {
+  "active_current": {
    "published": 6,
    "first": 0.0,
    "last": 0.0,
@@ -190,12 +274,26 @@
    "min": 44.4,
    "max": 44.4
   },
+  "defrost_active": {
+   "published": 5,
+   "first": 0.0,
+   "last": 0.0,
+   "min": 0.0,
+   "max": 0.0
+  },
   "derated_temp_ceiling": {
    "published": 5,
    "first": 80.0,
    "last": 80.0,
    "min": 80.0,
    "max": 80.0
+  },
+  "compressor_slew_limit": {
+   "published": 5,
+   "first": 2.0,
+   "last": 2.0,
+   "min": 2.0,
+   "max": 2.0
   },
   "demand_state": {
    "published": 5,
@@ -204,7 +302,49 @@
    "min": 0.0,
    "max": 0.0
   },
-  "compressor_run_time": {
+  "compressor_speed_stable_time": {
+   "published": 5,
+   "first": 0.0,
+   "last": 0.0,
+   "min": 0.0,
+   "max": 0.0
+  },
+  "fan_target_stable_time": {
+   "published": 5,
+   "first": 0.0,
+   "last": 0.0,
+   "min": 0.0,
+   "max": 0.0
+  },
+  "defrost_reference_heat_output": {
+   "published": 5,
+   "first": 0.0,
+   "last": 0.0,
+   "min": 0.0,
+   "max": 0.0
+  },
+  "defrost_reference_attempt": {
+   "published": 5,
+   "first": 0.0,
+   "last": 0.0,
+   "min": 0.0,
+   "max": 0.0
+  },
+  "time_since_defrost": {
+   "published": 5,
+   "first": 0.0,
+   "last": 0.0,
+   "min": 0.0,
+   "max": 0.0
+  },
+  "demand_window": {
+   "published": 5,
+   "first": 0.0,
+   "last": 0.0,
+   "min": 0.0,
+   "max": 0.0
+  },
+  "defrost_capacity_loss": {
    "published": 5,
    "first": 0.0,
    "last": 0.0,
@@ -224,48 +364,6 @@
    "last": 480.0,
    "min": 480.0,
    "max": 480.0
-  },
-  "demand_mode": {
-   "published": 6,
-   "first": 0.0,
-   "last": 0.0,
-   "min": 0.0,
-   "max": 0.0
-  },
-  "building_pump_power": {
-   "published": 6,
-   "first": 0.0,
-   "last": 0.0,
-   "min": 0.0,
-   "max": 0.0
-  },
-  "outside_temp": {
-   "published": 6,
-   "first": 21.0,
-   "last": 21.0,
-   "min": 21.0,
-   "max": 21.0
-  },
-  "requested_flow_temp": {
-   "published": 6,
-   "first": 20.1875,
-   "last": 20.1875,
-   "min": 20.1875,
-   "max": 20.1875
-  },
-  "building_circuit_flow_split": {
-   "published": 6,
-   "first": 0.0,
-   "last": 0.0,
-   "min": 0.0,
-   "max": 0.0
-  },
-  "flow_return_calibration": {
-   "published": 6,
-   "first": 0.0,
-   "last": 0.0,
-   "min": 0.0,
-   "max": 0.0
   }
  },
  "never_published": []

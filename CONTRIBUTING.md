@@ -1,7 +1,7 @@
 # Contributing
 
 This component decodes a Modbus RTU link for Vaillant heatpumps. 
-36 sensors are published from the 271 registers; the rest range from
+53 sensors are published from the 271 registers; the rest range from
 "confirmed real but not decoded" down to "genuinely unknown" - see
 [`REGISTERS.md`](REGISTERS.md) for the complete picture, including the
 exact value range observed for every still-unidentified register. If you
@@ -28,8 +28,10 @@ a real `ebusd` field over an actual state change, open an issue or PR
 with:
 
 - The register address and the `ebusd` field it matches.
-- The scale that fits (raw integer, `/10`, or D2C `/16` are the three
-  used elsewhere on this bus - try those first).
+- The scale that fits (raw integer, `/10` and D2C `/16` are the most
+  common on this bus - try those first; `/50` volts, `/1000` amps, an
+  unsigned integer for timers and powers, and a 32-bit float across two
+  registers also occur).
 - Enough of your own data (a few real transition timestamps and both
   sides' values at each one) for the claim to be checked, not just a
   single-snapshot coincidence.

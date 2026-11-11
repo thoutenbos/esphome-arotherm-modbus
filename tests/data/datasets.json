@@ -24,8 +24,7 @@
     "water_pressure",
     "building_circuit_flow",
     "run_phase",
-    "load_step",
-    "flow_rate_secondary"
+    "active_current"
    ],
    "values": {
     "flow_temp": 27.0625,
@@ -40,7 +39,7 @@
     "outside_temp": 11.125,
     "lockout_duration": 480,
     "flow_return_calibration": 0.3125,
-    "load_step": 0,
+    "active_current": 0,
     "demand_state": 0
    }
   }
@@ -80,8 +79,7 @@
     "water_pressure": 1.4,
     "lockout_duration": 480,
     "demand_state": 0,
-    "compressor_run_time": 0,
-    "flow_rate_secondary": 0,
+    "fan_target_stable_time": 0,
     "flow_return_calibration": 0,
     "derated_temp_ceiling": 80
    }
@@ -154,13 +152,13 @@
     "return_temp": 51.1875,
     "high_pressure": 19.1,
     "demand_state": 3,
-    "load_step": 84,
+    "active_current": 8.4,
     "fan_speed_target": 650,
     "delta_t": [
      4.72,
      4.76
     ],
-    "compressor_run_time": [
+    "fan_target_stable_time": [
      2940,
      2942
     ]
@@ -194,7 +192,7 @@
      3,
      4
     ],
-    "compressor_run_time": [
+    "fan_target_stable_time": [
      0,
      5445
     ]

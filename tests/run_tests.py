@@ -60,6 +60,15 @@ NOISE = [b"\x00", b"\xff\xff", b"\x01", b"\x01\x03", b"\x01\x10\x10\x00", b"\x01
 ADU_LOG = re.compile(r"len=(\d+) \[([0-9A-F ]+)\](?: ascii=\[.*?\])?(?: regs=\[(.*)\])?$")
 
 
+def _text_sensors():
+    """(key, register, kind) of every TextSensorDef in the component."""
+    src = open(os.path.join(COMPONENT_DIR, "__init__.py")).read()
+    return [(k, int(reg, 16), kind) for k, reg, kind in
+            re.findall(r'TextSensorDef\("(\w+)", (0x[0-9A-Fa-f]+), "(\w+)"', src)]
+
+
+TEXT_SENSORS = _text_sensors()
+
 # --------------------------------------------------------------------------
 # Building and driving the harness
 
@@ -83,12 +92,14 @@ class Run:
         self.adus: list[tuple[bytes, list[tuple[str, float]], str]] = []
         self.problems: list[str] = []
         self.pending: list[tuple[str, float]] = []
+        self.texts: list[tuple[str, str]] = []
 
 
 def run_firmware(exe: str, sensors, streams: list[list[bytes]]) -> list[Run]:
     """Feed each stream (a list of byte chunks, bus-idle between chunks) to a
     fresh component instance."""
     lines = ["S %04X %s" % (s.register, s.scale.upper()) for s in sensors]
+    lines += ["T %04X %s" % (reg, kind.upper()) for _, reg, kind in TEXT_SENSORS]
     for chunks in streams:
         lines.append("N")
         for chunk in chunks:
@@ -107,6 +118,9 @@ def run_firmware(exe: str, sensors, streams: list[list[bytes]]) -> list[Run]:
                 cur.problems.append("publishes not followed by an ADU log line: %r" % cur.pending)
             runs.append(cur)
             cur = Run()
+        elif line.startswith("X "):
+            _, idx, text = line.split(" ", 2)
+            cur.texts.append((TEXT_SENSORS[int(idx)][0], text))
         elif line.startswith("P "):
             _, idx, value = line.split()
             cur.pending.append((sensors[int(idx)].key, float(value)))
@@ -286,6 +300,8 @@ def test_unit(exe, sensors, args, errors) -> int:
         got = [p for _, pubs, _ in run.adus for p in pubs]
         if not same_publishes(got, case["publish"]):
             errors.append("%s:\n      published %s\n      expected  %s" % (case["name"], got, case["publish"]))
+        if "text" in case and run.texts != case["text"]:
+            errors.append("%s:\n      text published %s\n      expected       %s" % (case["name"], run.texts, case["text"]))
         if "adus" in case and len(run.adus) != case["adus"]:
             errors.append("%s: framed %d ADUs, expected %d" % (case["name"], len(run.adus), case["adus"]))
         print("  %-4s %s" % ("ok" if len(errors) == before else "FAIL", case["name"]))
@@ -307,7 +323,7 @@ def test_hygiene(sensors, errors) -> int:
         if name != "datasets.json" and name not in manifest:
             errors.append("data/%s is not listed in data/datasets.json" % name)
 
-    keys = {s.key for s in sensors}
+    keys = {s.key for s in sensors} | {k for k, _, _ in TEXT_SENSORS}
     in_block = False
     for line in open(EXAMPLE_YAML):
         if re.match(r"^arotherm_modbus:", line):

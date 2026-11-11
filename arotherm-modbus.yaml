@@ -40,14 +40,7 @@ arotherm_modbus:
   time_id: ha_time
   rx_pin: 21
 
-  compressor_inlet_temp:
-    name: "Compressor Inlet Temp"
-  compressor_outlet_temp:
-    name: "Compressor Outlet Temp"
-  eev_outlet_temp:
-    name: "EEV Outlet Temp"
-  condensor_outlet_temp:
-    name: "Condensor Outlet Temp"
+  # --- Temperatures ---
   air_inlet_temp:
     id: air_inlet_temp
     name: "Air Inlet Temp"
@@ -59,101 +52,133 @@ arotherm_modbus:
   return_temp:
     id: return_temp
     name: "Return Temp"
-  high_pressure:
-    name: "High Pressure"
-  low_pressure:
-    name: "Low Pressure"
-  water_pressure:
-    name: "Water Pressure"
-  compressor_speed:
-    id: compressor_speed
-    name: "Compressor Speed"
-  fan1_speed:
-    name: "Fan1 Speed"
-  fan_speed_target:
-    name: "Fan Speed Target"
-  building_pump_power:
-    name: "Building Pump Power"
-  eev_position:
-    name: "EEV Position"
-  eev_position_status:
-    name: "EEV Position Status"
-  compressor_speed_target:
-    name: "Compressor Speed Target"
-  subcooling:
-    name: "Subcooling"
-  superheat:
-    name: "Superheat"
+  delta_t:
+    name: "Delta T"
+  requested_flow_temp:
+    name: "Requested Flow Temp"
+  flow_return_calibration:
+    name: "Flow-Return Calibration"
+
+  # --- Refrigerant circuit ---
+  compressor_inlet_temp:
+    name: "Compressor Inlet Temp"
+  compressor_outlet_temp:
+    name: "Compressor Outlet Temp"
+  eev_outlet_temp:
+    name: "EEV Outlet Temp"
+  condensor_outlet_temp:
+    name: "Condensor Outlet Temp"
   condensing_temp:
     name: "Condensing Temp"
   evaporating_temp:
     name: "Evaporating Temp"
+  high_pressure:
+    name: "High Pressure"
+  low_pressure:
+    name: "Low Pressure"
+  subcooling:
+    name: "Subcooling"
+  superheat:
+    name: "Superheat"
+  eev_position:
+    name: "EEV Position"
+  eev_position_status:
+    name: "EEV Position Status"
   derated_temp_ceiling:
     name: "Derated Temp Ceiling"
+
+  # --- Compressor and fan ---
+  compressor_speed:
+    id: compressor_speed
+    name: "Compressor Speed"
+  compressor_speed_target:
+    name: "Compressor Speed Target"
+  compressor_speed_min:
+    name: "Compressor Speed Min"
+  compressor_speed_max:
+    name: "Compressor Speed Max"
+  compressor_slew_limit:
+    name: "Compressor Slew Limit"
+  compressor_speed_stable_time:
+    name: "Compressor Speed Stable Time"
+  compressor_ramp_state:
+    name: "Compressor Ramp State"
+  fan1_speed:
+    name: "Fan1 Speed"
+  fan_speed_target:
+    name: "Fan Speed Target"
+  fan_target_stable_time:
+    name: "Fan Target Stable Time"
+
+  # --- Water side ---
+  water_pressure:
+    name: "Water Pressure"
+  building_circuit_flow:
+    name: "Building Circuit Flow"
+  building_circuit_flow_target:
+    name: "Building Circuit Flow Target"
+  building_pump_power:
+    name: "Building Pump Power"
+  heat_output:
+    id: heat_output
+    name: "Heat Output"
+  hot_water_mode_active:
+    name: "Hot Water Mode Active"
+
+  # --- Electrical ---
   electric_power_consumption:
     id: electric_power_consumption
     name: "Electric Power Consumption"
-  building_circuit_flow:
-    id: building_circuit_flow
-    name: "Building Circuit Flow"
-  flow_rate_secondary:
-    name: "Flow Rate (secondary reading)"
+  mains_voltage:
+    name: "Mains Voltage"
+  active_current:
+    name: "Mains Current"
+
+  # --- Demand and state ---
   demand_mode:
     name: "Demand Mode"
-  run_phase:
-    name: "Run Phase"
-  requested_flow_temp:
-    name: "Requested Flow Temp"
   demand_state:
     name: "Demand State"
-  load_step:
-    name: "Load Step"
-  compressor_run_time:
-    name: "Compressor Run Time"
-  delta_t:
-    id: delta_t
-    name: "Delta T"
+  run_phase:
+    name: "Run Phase"
+  demand_window:
+    name: "Demand Window"
   lockout_duration:
     name: "Lockout Duration"
-  flow_return_calibration:
-    name: "Flow/Return Calibration"
+
+  # --- Defrost ---
+  defrost_sequence:
+    name: "Defrost Sequence"
+  defrost_active:
+    name: "Defrost Active"
+  defrost_capacity_loss:
+    name: "Defrost Capacity Loss"
+  defrost_reference_heat_output:
+    name: "Defrost Reference Heat Output"
+  defrost_reference_attempt:
+    name: "Defrost Reference Attempt"
+  time_since_defrost:
+    name: "Time Since Defrost"
+
+  # --- Identity ---
+  serial_number:
+    name: "Serial Number"
+  firmware_version:
+    name: "Firmware Version"
 
   # aroTHERM Split plus (outdoor VWL 75/8.2 + indoor VWL 77/8.2 IS): the
   # indoor unit owns the water circuit, so remove water_pressure,
-  # building_circuit_flow, run_phase, requested_flow_temp and
-  # flow_rate_secondary above (they carry no data there) and use this instead - same id, so the calculated
-  # sensors below keep working. On a VWZ AI it reads the same as
-  # building_circuit_flow.
+  # building_circuit_flow, run_phase and requested_flow_temp above (they
+  # carry no data there) and use this instead. On a VWZ AI it reads the same
+  # as building_circuit_flow.
   # building_circuit_flow_split:
-  #   id: building_circuit_flow
   #   name: "Building Circuit Flow"
 
 # --- Calculated values -------------------
 sensor:
-  - platform: template
-    name: "Thermal Power Delivery"
-    id: thermal_power_delivery
-    unit_of_measurement: "kW"
-    accuracy_decimals: 2
-    device_class: power
-    state_class: measurement
-    icon: "mdi:radiator"
-    update_interval: 10s
-    # Uses delta_t, the heat pump's own uncalibrated flow/return
-    # differential, rather than flow_temp - return_temp: the pair carries the
-    # flow/return calibration the machine applies to itself, which made it
-    # read ~14% low against a certified heat meter at minimum modulation,
-    # where delta_t was within 1%. Falls back to the pair until delta_t has
-    # been seen (e.g. on a unit whose 0x2200 block does not carry it).
-    lambda: |-
-      float flow = id(building_circuit_flow).state;
-      float dt = id(delta_t).state;
-      if (std::isnan(dt))
-        dt = id(flow_temp).state - id(return_temp).state;
-      if (std::isnan(flow) || std::isnan(dt))
-        return {};
-      return flow * dt * (4.186f / 3600.0f);
-
+  # Heat Output (W) over electric power (W). Unavailable rather than zero
+  # while the compressor is stopped: a COP has no value when nothing runs,
+  # and zeroes would drag every average and long-term statistic down.
   - platform: template
     name: "Heat Pump COP"
     id: heat_pump_cop
@@ -161,18 +186,15 @@ sensor:
     icon: "mdi:heat-pump-outline"
     state_class: measurement
     update_interval: 10s
-    # Unavailable rather than zero while the compressor is stopped: a COP has
-    # no value when nothing runs, and zeroes would drag every average and
-    # long-term statistic down.
     lambda: |-
-      float thermal_kw = id(thermal_power_delivery).state;
+      float heat_w = id(heat_output).state;
       float electric_w = id(electric_power_consumption).state;
       float rps = id(compressor_speed).state;
-      if (std::isnan(thermal_kw) || std::isnan(electric_w) || std::isnan(rps))
+      if (std::isnan(heat_w) || std::isnan(electric_w) || std::isnan(rps))
         return {};
       if (rps <= 0.0f || electric_w < 50.0f)
         return {};
-      return (thermal_kw * 1000.0f) / electric_w;
+      return heat_w / electric_w;
 
   # Second-law efficiency: how much of the thermodynamic ceiling the machine
   # reaches. Carnot COP is the best any heat pump could do between the same
@@ -183,8 +205,7 @@ sensor:
   # T_hot is the mean of flow and return, the sink temperature the condenser
   # works against; T_cold is the air inlet, what the evaporator actually sees
   # (outside_temp is a damped controller value). It chains off Heat Pump COP,
-  # so it inherits that sensor's delta_t basis and is unavailable while the
-  # compressor is stopped.
+  # so it is unavailable while the compressor is stopped.
   - platform: template
     name: "Carnot Efficiency"
     id: carnot_efficiency

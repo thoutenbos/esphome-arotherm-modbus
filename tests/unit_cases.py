@@ -45,15 +45,18 @@ def expect_2000(n):
     d2c = lambda i: i + 1 / 16  # noqa: E731
     raw = lambda i: float(i * 16 + 1)  # noqa: E731
     div10 = lambda i: (i * 16 + 1) / 10  # noqa: E731
-    div100 = lambda i: (i * 16 + 1) / 100  # noqa: E731
+    div50 = lambda i: (i * 16 + 1) / 50  # noqa: E731
+    div1000 = lambda i: (i * 16 + 1) / 1000  # noqa: E731
     table = [
+        ("building_circuit_flow_target", 0x01, raw), ("compressor_speed_max", 0x02, div10), ("compressor_speed_min", 0x03, div10),
+        ("defrost_sequence", 0x06, raw),
         ("compressor_inlet_temp", 0x07, d2c), ("compressor_outlet_temp", 0x08, d2c),
         ("eev_outlet_temp", 0x09, d2c), ("condensor_outlet_temp", 0x0A, d2c),
         ("air_inlet_temp", 0x0B, d2c), ("flow_temp", 0x0C, d2c), ("return_temp", 0x0D, d2c),
         ("low_pressure", 0x0E, div10), ("high_pressure", 0x0F, div10),
         ("compressor_speed", 0x10, div10), ("fan1_speed", 0x11, raw),
         ("water_pressure", 0x13, div10), ("building_circuit_flow", 0x14, raw), ("run_phase", 0x15, raw),
-        ("load_step", 0x1C, div100), ("flow_rate_secondary", 0x20, raw),
+        ("mains_voltage", 0x1B, div50), ("active_current", 0x1C, div1000),
     ]
     return [(k, f(off)) for k, off, f in table if off < n]
 
@@ -69,17 +72,30 @@ def block_2100():
     regs[0x2A] = 60         # subcooling 3.75 K
     regs[0x2C] = 0xFFDA     # superheat -2.375 K (signed)
     regs[0x2D] = 0xFF9C     # eev_position_status -10.0 % (signed)
+    regs[0x31] = 0          # defrost_active
     regs[0x37] = 1276       # derated_temp_ceiling 79.75 C
     regs[0x44] = 3          # demand_state: running
-    regs[0x46] = 2373       # compressor_run_time, s
+    regs[0x45] = 41         # compressor_speed_stable_time, s
+    regs[0x46] = 2373       # fan_target_stable_time, s
+    regs[0x48] = 1          # defrost_reference_attempt
+    regs[0x4C] = 40000      # time_since_defrost, s - above 32,767, so it must read unsigned
+    regs[0x4E] = 9          # compressor_ramp_state: drive on, ramping up (text sensor)
+    regs[0x3F:0x41] = [0x3E4C, 0xCCCD]  # compressor_slew_limit 0.2 rps/s
+    regs[0x47] = 2907       # defrost_reference_heat_output, W
+    regs[0x5C] = 150        # demand_window
+    regs[0x60:0x62] = [0x4030, 0x0000]  # defrost_capacity_loss 2.75 %
     return regs
 
 
 EXPECT_2100 = [
-    ("electric_power_consumption", 1234.0), ("eev_position", 350.0), ("compressor_speed_target", 45.6),
-    ("fan_speed_target", 610.0), ("condensing_temp", 37.5), ("evaporating_temp", -5.0),
-    ("subcooling", 3.75), ("superheat", -2.375), ("eev_position_status", -10.0),
-    ("derated_temp_ceiling", 79.75), ("demand_state", 3.0), ("compressor_run_time", 2373.0),
+    ("electric_power_consumption", 1234.0), ("eev_position", 350.0),
+    ("compressor_speed_target", 45.6), ("fan_speed_target", 610.0), ("condensing_temp", 37.5),
+    ("evaporating_temp", -5.0), ("subcooling", 3.75), ("superheat", -2.375), ("eev_position_status", -10.0),
+    ("defrost_active", 0.0), ("derated_temp_ceiling", 79.75), ("compressor_slew_limit", 0.2), ("demand_state", 3.0),
+    ("compressor_speed_stable_time", 41.0), ("fan_target_stable_time", 2373.0),
+    ("defrost_reference_heat_output", 2907.0), ("defrost_reference_attempt", 1.0),
+    ("time_since_defrost", 40000.0), ("demand_window", 150.0),
+    ("defrost_capacity_loss", 2.75),
 ]
 
 
@@ -107,6 +123,8 @@ def block_1000(n=26):
     regs[0x03] = 849        # building_pump_power 84.9 %
     regs[0x09] = 0xFFB8     # outside_temp -4.5 C (signed)
     regs[0x0A] = 1213       # building_circuit_flow_split, l/h
+    regs[0x12] = 1          # hot_water_mode_active
+    regs[0x14] = 2604       # heat_output, W
     if n > 0x19:
         regs[0x19] = 35 * 16  # requested_flow_temp 35 C
     return regs
@@ -114,10 +132,70 @@ def block_1000(n=26):
 
 EXPECT_1000 = [
     ("demand_mode", 1.0), ("building_pump_power", 84.9), ("outside_temp", -4.5),
-    ("requested_flow_temp", 35.0), ("building_circuit_flow_split", 1213.0),
+    ("building_circuit_flow_split", 1213.0), ("hot_water_mode_active", 1.0), ("heat_output", 2604.0), ("requested_flow_temp", 35.0),
 ]
 
+def block_2100_ramp(state):
+    regs = block_2100()
+    regs[0x4E] = state
+    return regs
+
+
+def block_2200_version(n=73):
+    regs = block_2200()
+    regs[0x03:0x06] = [405, 4, 7]
+    return regs[:n]
+
+
+def block_1200(serial="21000000000000000000000000N8", n=25):
+    """The 0x1200 write block around a 28-character serial (a made-up one)."""
+    padded = (serial + "<" * 35)[:35]
+    regs = [0xFFFF, 0xFFFF, 0x000A, ord(padded[0])]
+    regs += [(ord(padded[i]) << 8) | ord(padded[i + 1]) for i in range(1, 35, 2)]
+    regs += [1, 0, 0, 0xFFFF]
+    return regs[:n]
+
+
 CASES = [
+    {
+        "name": "text: serial number from the 0x1200 write block, padding dropped, published once",
+        "chunks": [write(0x1200, block_1200()), write_ack(0x1200, 25),
+                   write(0x1200, block_1200()), write_ack(0x1200, 25)],
+        "publish": [],
+        "text": [("serial_number", "21000000000000000000000000N8")],
+    },
+    {
+        "name": "text: a serial number cut off by the end of its block is not published",
+        "chunks": [write(0x1200, block_1200(n=20)), write_ack(0x1200, 20)],
+        "publish": [],
+        "text": [],
+    },
+    {
+        "name": "text: firmware version from 0x2203-0x2205, published once while unchanged",
+        "chunks": [request(0x2200, 73), response(block_2200_version()),
+                   request(0x2200, 73), response(block_2200_version())],
+        "publish": [("delta_t", 1.8125), ("lockout_duration", 480.0)] * 2,
+        "text": [("firmware_version", "405.4.7")],
+    },
+    {
+        "name": "text: a firmware version cut off by the end of its block is not published",
+        "chunks": [request(0x2200, 5), response(block_2200_version(n=5))],
+        "publish": [],
+        "text": [],
+    },
+    {
+        "name": "text: compressor ramp state follows the bitfield and republishes only on change",
+        "chunks": [request(0x2100, 98), response(block_2100_ramp(5)),
+                   request(0x2100, 98), response(block_2100_ramp(5)),
+                   request(0x2100, 98), response(block_2100_ramp(17)),
+                   request(0x2100, 98), response(block_2100_ramp(16)),
+                   request(0x2100, 98), response(block_2100_ramp(0)),
+                   request(0x2100, 98), response(block_2100_ramp(0x21))],
+        "publish": EXPECT_2100 * 6,
+        "text": [("compressor_ramp_state", "At speed"), ("compressor_ramp_state", "Ramping down"),
+                 ("compressor_ramp_state", "Ramping down to stop"), ("compressor_ramp_state", "Off"),
+                 ("compressor_ramp_state", "drive on, bit 5")],
+    },
     {
         "name": "0x2200 block: delta_t and lockout_duration are 32-bit floats over two registers",
         "chunks": [request(0x2200, 73), response(block_2200())],

@@ -3,6 +3,7 @@
 #include "esphome/core/hal.h"
 
 #include <cmath>
+#include <cstdio>
 #include <cstring>
 
 #ifdef USE_ESP32
@@ -377,11 +378,16 @@ float AroThermModbus::scale_value_(Scale scale, int32_t raw) {
   switch (scale) {
     case Scale::DIV10:
       return raw / 10.0f;
+    case Scale::DIV50:
+      return raw / 50.0f;
     case Scale::DIV100:
       return raw / 100.0f;
+    case Scale::DIV1000:
+      return raw / 1000.0f;
     case Scale::D2C:
       return raw / 16.0f;
     case Scale::RAW:
+    case Scale::URAW:
     default:
       return (float) raw;
   }
@@ -405,9 +411,89 @@ void AroThermModbus::publish_block_(const uint8_t *data, size_t header_len, uint
         rs.sensor->publish_state(value);
       continue;
     }
-    const int32_t raw = (int16_t) ((data[byte_off] << 8) | data[byte_off + 1]);
+    const uint16_t word = (uint16_t) ((data[byte_off] << 8) | data[byte_off + 1]);
+    const int32_t raw = rs.scale == Scale::URAW ? (int32_t) word : (int32_t) (int16_t) word;
     rs.sensor->publish_state(scale_value_(rs.scale, raw));
   }
+
+  for (auto &ts : this->text_sensors_) {
+    if (ts.register_address < base_register || ts.register_address >= base_register + count)
+      continue;
+    const size_t offset = ts.register_address - base_register;
+    auto reg = [&](size_t i) -> uint16_t {
+      const size_t off = header_len + ADU_REGISTER_FIELD_LEN * (offset + i);
+      return (uint16_t) ((data[off] << 8) | data[off + 1]);
+    };
+    std::string text;
+    if (ts.kind == TextKind::FIRMWARE_VERSION) {
+      // Needs this register and the next two.
+      if (offset + 2 >= count)
+        continue;
+      char buf[24];
+      snprintf(buf, sizeof(buf), "%u.%u.%u", (unsigned) reg(0), (unsigned) reg(1), (unsigned) reg(2));
+      text = buf;
+    } else if (ts.kind == TextKind::SERIAL_NUMBER) {
+      static constexpr size_t SERIAL_REGISTERS = 18;
+      if (offset + SERIAL_REGISTERS > count)
+        continue;
+      for (size_t i = 0; i < SERIAL_REGISTERS; i++) {
+        const uint16_t word = reg(i);
+        // The first register carries one character, in its low byte.
+        const char pair[2] = {(char) (word >> 8), (char) (word & 0xFF)};
+        for (size_t b = (i == 0 ? 1 : 0); b < 2; b++) {
+          if (pair[b] >= 0x21 && pair[b] <= 0x7E && pair[b] != '<')
+            text += pair[b];
+        }
+      }
+      if (text.empty())
+        continue;
+    } else {
+      text = ramp_state_text_(reg(0));
+    }
+    if (ts.published && text == ts.last)
+      continue;
+    ts.published = true;
+    ts.last = text;
+    ts.sensor->publish_state(text);
+  }
+}
+
+// 0x214E: bit 0 = drive on, then one of bit 2 (at speed), bit 3 (ramping up),
+// bit 4 (ramping down). Only 0, 1, 5, 9, 16 and 17 have been seen on the bus;
+// anything else is spelled out bit by bit rather than guessed at.
+std::string AroThermModbus::ramp_state_text_(uint16_t raw) {
+  switch (raw) {
+    case 0:
+      return "Off";
+    case 1:
+      return "Starting";
+    case 5:
+      return "At speed";
+    case 9:
+      return "Ramping up";
+    case 17:
+      return "Ramping down";
+    case 16:
+      return "Ramping down to stop";
+    default:
+      break;
+  }
+  static const char *const BIT_NAMES[] = {"drive on", "bit 1", "at speed", "ramping up", "ramping down"};
+  std::string text;
+  for (int bit = 0; bit < 16; bit++) {
+    if (!(raw & (1u << bit)))
+      continue;
+    if (!text.empty())
+      text += ", ";
+    if (bit < 5) {
+      text += BIT_NAMES[bit];
+    } else {
+      char buf[12];
+      snprintf(buf, sizeof(buf), "bit %d", bit);
+      text += buf;
+    }
+  }
+  return text;
 }
 
 void AroThermModbus::decode_message_(const uint8_t *data, size_t len) {

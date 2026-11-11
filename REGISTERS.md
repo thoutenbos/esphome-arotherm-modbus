@@ -1,780 +1,806 @@
-# Register map: complete known structure
+# Register map
 
-Everything this project knows about every message this bus carries, one row
-per register (or per unbroken span of registers that are statistically
-indistinguishable from each other - see "How to read the range rows"
-below), across all six register blocks.
+What is known about every register on the Modbus link between a Vaillant
+aroTHERM 75/8.1 outdoor unit and its VWZ AI indoor interface: the bus, the
+271 registers, and the sequences the machine runs through.
 
-## Message framing (applies to every block below)
+This file states the current findings only. Section 9 describes the evidence
+behind them; earlier readings that were withdrawn are in the git history of
+this file.
 
-Every message is a standard Modbus RTU ADU: address (`01`, always this
-device), function code (`0x03` Read Holding Registers or `0x10` Write
-Multiple Registers), a function-specific body, and a CRC-16 (poly
-`0xA001`, init `0xFFFF`). A read transaction is
-a short *request* (which registers, how many) followed by a *response*
-carrying the values - the response never repeats its own starting
-address, so the firmware attributes a response's registers to the read
-request seen just before it (its start register and count), in both
-`decode_message_()` and `format_registers_()`. Only a response with no
-matching request in front of it (the first one after boot, or one whose
-request was lost) falls back to matching its *register count* against the
-VWZ AI counts below. A write transaction is a
-request carrying the values themselves, acknowledged by an 8-byte echo of
-the address/count.
+Contents:
 
-Each register is a big-endian 16-bit word, normally read as a signed
-integer at one of the scales in the tables (raw, `/10`, `/100`, or D2C
-`/16`). A handful of register *pairs* instead hold one big-endian IEEE-754
-32-bit float, high word first - see "32-bit floats on this bus".
-
-| block | op | start address | register count | request/notification bytes | data-carrying message |
-|---|---|---|---|---|---|
-| `0x1000` | write (`0x10`) | `0x1000` | 26 | 61-byte write request (carries the data), 8-byte ack | the write request itself |
-| `0x1100` | write (`0x10`) | `0x1100` | 15 | 39-byte write request, 8-byte ack | the write request itself |
-| `0x1200` | write (`0x10`) | `0x1200` | 25 | 59-byte write request, 8-byte ack | the write request itself |
-| `0x2000` | read (`0x03`) | `0x2000` | 34 | 8-byte read request | 73-byte read response |
-| `0x2100` | read (`0x03`) | `0x2100` | 98 | 8-byte read request | 201-byte read response |
-| `0x2200` | read (`0x03`) | `0x2200` | 73 | 8-byte read request | 151-byte read response |
-
-All six repeat in a fixed order roughly once every 1.2s.
-
-The counts above are the **VWZ AI + aroTHERM 75/8.1** this map was built on.
-Other units carry the same layout with different block lengths:
-
-| block | VWZ AI + aroTHERM 75/8.1 | VWZ AI + aroTHERM plus 7 kW ([#2](https://github.com/thoutenbos/esphome-arotherm-modbus/issues/2)) | aroTHERM Split plus, VWL 75/8.2 + VWL 77/8.2 IS ([#3](https://github.com/thoutenbos/esphome-arotherm-modbus/pull/3)) |
-|---|---|---|---|
-| `0x1000` | 26 | 26 | 25 (ends at `0x1018`; no `0x1019`) |
-| `0x1100` | 15 | 15 | 14 |
-| `0x1200` | 25 | 25 | 24 |
-| `0x2000` | 34 | 35 (one extra register, `0x2022`) | 32 (ends at `0x201F`) |
-| `0x2100` | 98 | 98 | 98 |
-| `0x2200` | 73 | 73 | 73 |
-
-On both other units the registers that were checked (`0x2007`-`0x2011`,
-`0x212A`, `0x212C`, `0x211B`) decode with the offsets and scales below.
-The split unit's indoor unit owns the water side, so some `0x2000`
-registers are empty there: `0x2013` (water pressure) reads `0xFFFF`,
-`0x2014` (building circuit flow) always `0`, `0x2015` (run phase) `0` even
-with the compressor running - the flow is in `0x100A` instead.
-
-## How to read the range rows
-
-Where no per-register distinction has ever been found - a span that has
-only ever been seen holding one constant value, or that varies but has
-never matched anything in `ebusd` even loosely - one row covers the whole
-span rather than repeating the same "unknown" fact register by register.
-Every register address in every block is accounted for below, either
-individually or inside exactly one such range; nothing is omitted.
-
-**Status legend:**
-- **Confirmed** - matched a specific `ebusd` field to the standard this
-  project holds for a "real" match (median and/or p90 absolute difference
-  effectively 0 over a full session, or an exact structural fact like a
-  byte-for-byte echo). Published as an HA sensor unless noted otherwise.
-- **Confirmed (structural)** - a fact about the register's behavior
-  (always this exact value, echoes another block's payload) established
-  with certainty, but not a decoded physical quantity - nothing to
-  publish, because there is no field identity to publish it *as*.
-- **Lead** - a plausible but not-fully-confirmed match: a looser
-  statistical fit, a value range that's merely "plausible," or a
-  correlation not yet checked against a real physical event.
-- **Unknown** - no candidate identity found, or not yet examined at all.
+1. [The bus](#1-the-bus)
+2. [Encodings](#2-encodings)
+3. [Status legend](#3-status-legend)
+4. [Register tables](#4-register-tables)
+5. [State machines and sequences](#5-state-machines-and-sequences)
+6. [Formulas and identities](#6-formulas-and-identities)
+7. [How this machine behaves](#7-how-this-machine-behaves)
+8. [Open questions](#8-open-questions)
+9. [Where these findings come from](#9-where-these-findings-come-from)
 
 ---
 
-## Where these tables come from
+## 1. The bus
 
-The tables below were built from five capture sessions on one **VWZ AI +
-aroTHERM 75/8.1** installation, deliberately different in character: two
-domestic-hot-water cycles end to end, a 17-hour pure-standby session, a
-short space-heating session that starts mid-run, and a ~23-hour session of
-space heating end to end (several heating starts and stops, one hot-water
-charge and a long idle gap, with `demand_mode` taking all three values).
-Together they hold about 2.4 million messages; all reassemble to 100%
-CRC-valid messages in the same six block shapes, with no shape appearing in
-one session but not another. Where a note below says "in every capture", it
-has been checked in all five.
+Standard Modbus RTU at 19,200 baud. The indoor interface is the master and the
+outdoor unit is slave `01`. Every message is address, function code, body and
+CRC-16 (polynomial `0xA001`, initial value `0xFFFF`).
 
-Where a register was cross-checked against something outside the bus, the
-references were `ebusd` (polling the same heat pump over eBUS), an
-independent electricity meter on the outdoor unit's supply, and an
-MID-certified heat meter on the same water circuit.
+Six blocks are exchanged in a fixed cycle of **1.2004 s**:
 
-**A note on one `ebusd` reference field.** `hmux0_status01_temp_4` is the
-domestic-hot-water **storage (cylinder) temperature**, per the `Status01`
-field layout in [MarkBovee/vaillant-ebus](https://github.com/MarkBovee/vaillant-ebus)
-(flow, return, outside, hot water, storage, pump state) - verified against
-live values, where `temp` tracked `RunDataFlowTemp`, `temp_1`
-`RunDataReturnTemp`, and `temp_2` the outside temperature. It is unusually
-useful as a reference because it swings 37-66 °C across a cycle while
-everything else decays toward ambient. Every register was tested against it
-at three scales: the best fit was a median absolute difference of 6.0 K with
-a p90 of 22.5 K, and the closest "matches" are constants that happen to sit
-mid-range. **The outdoor unit does not see the cylinder temperature on this
-bus** - it is an indoor-side measurement, and it is ruled out as an identity
-for every unknown register here.
+| phase | block | operation | registers | data rides in |
+|---|---|---|---|---|
+| +0.000 s | `0x2000` | read (`0x03`) | 34 | 73-byte response |
+| +0.186 s | `0x1000` | write (`0x10`) | 26 | 61-byte request |
+| +0.449 s | `0x2200` | read | 73 | 151-byte response |
+| +0.584 s | `0x1200` | write | 25 | 59-byte request |
+| +0.877 s | `0x2100` | read | 98 | 201-byte response |
+| +0.976 s | `0x1100` | write | 15 | 39-byte request |
 
-**Constancy is per-regime, not absolute.** All 271 registers appear in
-every session. Classifying each one against all five captures at once:
+**Direction.** A `0x1xxx` register is written by the controller, so it is a
+command, a setting, or a value the controller computed and passes on. A
+`0x2xxx` register is read from the outdoor unit, so it is something the
+outdoor unit measures or computes. Nothing sensed indoors (cylinder
+temperature, room temperature) appears on the read side.
 
-| class | count | meaning |
+**Attributing a read response.** A response does not carry its own address.
+It belongs to the read request seen just before it. Only when no request was
+seen (after boot, or a lost request) does the firmware fall back to matching
+the register count.
+
+**Other units.** An aroTHERM plus 7 kW with VWZ AI reads 35 registers from
+`0x2000`. An aroTHERM Split plus reads 32 from `0x2000` and writes 25, 14 and
+24 registers to the three write blocks; on that unit the circuit flow is only
+in `0x100A`.
+
+**Block phase matters when comparing registers.** `0x2100` is read 0.877 s
+after `0x2000` and 0.323 s before the next one. Two registers in different
+blocks that change "one poll apart" may have changed together.
+
+## 2. Encodings
+
+| name | meaning |
+|---|---|
+| D2C, `/16` | signed 16-bit, `value = raw / 16`. Every temperature and temperature difference |
+| `/10` | signed 16-bit, `raw / 10`. Pressures (bar), compressor speeds (rps), percentages |
+| `/50` | `raw / 50`. Voltages; the registers only ever hold multiples of 50, so 1 V is the resolution |
+| `/1000` | `raw / 1000`. Currents in A; the registers hold multiples of 100, so 0.1 A is the resolution |
+| raw | signed 16-bit integer |
+| unsigned raw | unsigned 16-bit integer. Timers and powers, which run past 32,767 |
+| f32 | big-endian IEEE-754 single spanning two registers, high word first |
+| ASCII | two characters per register, high byte first, padded with `<` or `X` |
+
+## 3. Status legend
+
+- **Confirmed** - matched an independent reference (an `ebusd` field, a
+  certified meter, an owner-supplied fact) or an exact identity against other
+  confirmed registers.
+- **Structural** - an exact fact about behaviour (an echo, a flag, a constant
+  tied to a measured timer) without a physical quantity of its own.
+- **Lead** - a reading that fits, but that nothing has confirmed.
+- **Unknown** - moves, or is constant, with no identified meaning.
+
+A register that is only a Lead or Unknown is not published as a sensor in
+this release, even where it moves.
+
+## 4. Register tables
+
+Registers not listed individually inside a range have only ever held the
+value shown. "Echo" means an exact or near-exact copy of the named register,
+not published as a sensor.
+
+### 4.1 Write block `0x1000` (26 registers)
+
+Written by the controller every cycle. A mixed payload: one command, several
+values echoed back to the outdoor unit, and values the controller computed.
+
+| register | identity | scale | status | sensor |
+|---|---|---|---|---|
+| `0x1000` | **demand mode**: `0` idle, `1` space heating, `2` hot water, `5` defrost. The controller originates 0/1/2; for `5` it follows the outdoor unit's `0x2000` by 0.19 s | raw | Confirmed | `Demand Mode` |
+| `0x1001` | constant `0` | | Unknown | |
+| `0x1002` | compressor speed, smoothed echo of `0x2010` | `/10`, rps | Structural | |
+| `0x1003` | building circuit pump command | `/10`, % | Confirmed | `Building Pump Power` |
+| `0x1004` | unit-active flag: `1` while `0x2015` is `1` or `6` | raw | Structural | |
+| `0x1005` | condenser outlet temperature, echo of `0x200A` | D2C | Structural | |
+| `0x1006` | constant `0x8000` | | Unknown | |
+| `0x1007` | flow temperature, echo of `0x200C` | D2C | Structural | |
+| `0x1008` | return temperature, echo of `0x200D` | D2C | Structural | |
+| `0x1009` | outside temperature, as the controller uses it (damped) | D2C, °C | Confirmed | `Outside Temp` |
+| `0x100A` | building circuit flow, exact echo of `0x2014`. On the Split plus the only flow reading | raw, l/h | Confirmed | `Building Circuit Flow` (`building_circuit_flow_split`, Split plus) |
+| `0x100B`-`0x1011` | constant `0` | | Unknown | |
+| `0x1012` | **outdoor unit is in hot-water mode**: `1` exactly when `0x2000 == 2`. Its edges are the moment the diverter valve moves | raw, 0/1 | Structural | `Hot Water Mode Active` |
+| `0x1013` | constant `0` | | Unknown | |
+| `0x1014` | **heat output**, computed by the controller from flow and the flow/return pair, and consumed by the outdoor unit's defrost logic ([6.1](#61-heat-output-0x1014)) | unsigned raw, W | Confirmed | `Heat Output` |
+| `0x1015`-`0x1017` | constant `0xFFFF` | | Unknown | |
+| `0x1018` | constant `0` | | Unknown | |
+| `0x1019` | **requested flow temperature** ([6.8](#68-requested-flow-temperature-0x1019)) | D2C, °C | Confirmed | `Requested Flow Temp` |
+
+### 4.2 Write block `0x1100` (15 registers)
+
+Static configuration.
+
+| register | identity | scale | status | sensor |
+|---|---|---|---|---|
+| `0x1100` | constant `0` | | Unknown | |
+| `0x1101` | constant `300` | | Unknown | |
+| `0x1102` | constant `18000`. 180.00 on a `/100` scale, the length of the post-stop countdown `0x211C`; a coincidence of value | | Lead | |
+| `0x1103` | constant `16` | | Unknown | |
+| `0x1104` | constant `0x8001` | | Unknown | |
+| `0x1105`-`0x1108` | constant `0` | | Unknown | |
+| `0x1109` | **flow/return calibration** (Vaillant D.003). The machine sets it itself; it has been seen to step from `0` to `-1`, `-4` and `-5` within a few weeks at the start of the heating season. One count is 1/16 K, so `-5` is -0.3125 K | D2C, K | Confirmed | `Flow-Return Calibration` |
+| `0x110A` | constant `0` | | Unknown | |
+| `0x110B`-`0x110C` | constant `1` | | Unknown | |
+| `0x110D`-`0x110E` | constant `0` | | Unknown | |
+
+### 4.3 Write block `0x1200` (25 registers)
+
+Identity, written by the controller.
+
+| register | identity | scale | status | sensor |
+|---|---|---|---|---|
+| `0x1200`-`0x1201` | constant `0xFFFF` | | Unknown | |
+| `0x1202` | constant `10` | | Unknown | |
+| `0x1203` | first character of the serial number, in the low byte | ASCII | Confirmed | `Serial Number` |
+| `0x1204`-`0x1214` | characters 2-28 of the **serial number**, then `<` padding. Confirmed against the unit's type plate | ASCII | Confirmed | `Serial Number` |
+| `0x1215`-`0x1218` | constants `1`, `0`, `0`, `0xFFFF` | | Unknown | |
+
+### 4.4 Read block `0x2000` (34 registers)
+
+| register | identity | scale | status | sensor |
+|---|---|---|---|---|
+| `0x2000` | **mode the outdoor unit is actually in**, same codes as `0x1000`. Follows the request by 1.2 s from idle and by 91.2 s when changing between heating and hot water with the compressor running. Originates `5` (defrost) | raw | Structural | |
+| `0x2001` | **requested building circuit flow** ([6.9](#69-circuit-flow-request-0x2001)) | raw, l/h | Confirmed | `Building Circuit Flow Target` |
+| `0x2002` | **upper bound of the permitted compressor speed** ([6.6](#66-compressor-speed-window-0x2002-0x2003)) | `/10`, rps | Confirmed | `Compressor Speed Max` |
+| `0x2003` | **lower bound of the permitted compressor speed**, the modulation floor | `/10`, rps | Confirmed | `Compressor Speed Min` |
+| `0x2004`-`0x2005` | constant `0` | | Unknown | |
+| `0x2006` | **defrost sequence in progress**: `1` exactly while `0x2144` is in `{5,6,7,8,9,11}` | raw, 0/1 | Confirmed | `Defrost Sequence` |
+| `0x2007` | compressor inlet temperature | D2C, °C | Confirmed | `Compressor Inlet Temp` |
+| `0x2008` | compressor outlet temperature. A pipe sensor: it peaks near 54 °C on a 60 °C charge, so it is not the discharge gas temperature | D2C, °C | Confirmed | `Compressor Outlet Temp` |
+| `0x2009` | expansion valve outlet temperature | D2C, °C | Confirmed | `EEV Outlet Temp` |
+| `0x200A` | condenser outlet temperature | D2C, °C | Confirmed | `Condensor Outlet Temp` |
+| `0x200B` | air inlet temperature | D2C, °C | Confirmed | `Air Inlet Temp` |
+| `0x200C` | flow temperature (calibrated) | D2C, °C | Confirmed | `Flow Temp` |
+| `0x200D` | return temperature (calibrated) | D2C, °C | Confirmed | `Return Temp` |
+| `0x200E` | refrigerant low pressure | `/10`, bar | Confirmed | `Low Pressure` |
+| `0x200F` | refrigerant high pressure | `/10`, bar | Confirmed | `High Pressure` |
+| `0x2010` | compressor speed, measured | `/10`, rps | Confirmed | `Compressor Speed` |
+| `0x2011` | fan speed, measured | raw, rpm | Confirmed | `Fan1 Speed` |
+| `0x2012` | constant `0` | | Unknown | |
+| `0x2013` | water pressure | `/10`, bar | Confirmed | `Water Pressure` |
+| `0x2014` | **building circuit flow**, the flow sensor. Within 2% of a MID-certified heat meter in every mode | raw, l/h | Confirmed | `Building Circuit Flow` |
+| `0x2015` | **run phase** ([5.9](#59-run-phase-0x2015)) | raw | Confirmed | `Run Phase` |
+| `0x2016`-`0x2017` | constant `0` | | Unknown | |
+| `0x2018` | electric power, echo of `0x211B` | raw, W | Structural | |
+| `0x2019` | fan speed, echo of `0x2011` | raw, rpm | Structural | |
+| `0x201A` | constant `0` | | Unknown | |
+| `0x201B` | **mains voltage**. `0` while the drive sleeps (idle beyond the 480 s lockout) | `/50`, V | Confirmed | `Mains Voltage` |
+| `0x201C` | **mains current**, rounded up to the next 0.1 A ([6.3](#63-mains-current-0x201c)) | `/1000`, A | Confirmed | `Mains Current` (`active_current`) |
+| `0x201D` | electric power, echo of `0x211B` | raw, W | Structural | |
+| `0x201E` | compressor motor voltage. Tracks speed at 2.2-2.8 V per rps and never exceeds the mains voltage | `/50`, V | Lead (strong) | |
+| `0x201F` | compressor motor current. Zero exactly when the compressor is stopped. A quantity proportional to torque fits equally well | `/1000`, A | Lead (strong) | |
+| `0x2020` | a second flow-like figure. Zero exactly when the pump is stopped, within a few percent of `0x2014`, with a gap that follows the pump's operating point ([6.10](#610-the-second-flow-figure-0x2020)) | raw | Unknown | |
+| `0x2021` | `0x201C + 1600` | raw | Structural | |
+
+### 4.5 Read block `0x2100` (98 registers)
+
+| register | identity | scale | status | sensor |
+|---|---|---|---|---|
+| `0x2100`-`0x2118` | constant `0xFFFF` | | Structural | |
+| `0x2119` | constant `0` | | Unknown | |
+| `0x211A` | constant `1` | | Unknown | |
+| `0x211B` | **electric power consumption**. Reads about 4.7% below a separate meter at normal load | raw, W | Confirmed | `Electric Power Consumption` |
+| `0x211C` | **180 s countdown**, started by every compressor stop ([5.4](#54-stop-sequence)) | raw, s | Structural | |
+| `0x211D`-`0x211F` | constant `1` | | Unknown | |
+| `0x2120` | expansion valve position, absolute | raw, steps | Confirmed | `EEV Position` |
+| `0x2121` | lockout flag: `0` from the start hand-off until 480 s after the compressor stops, `1` otherwise | raw | Structural | |
+| `0x2122` | **compressor speed target** | `/10`, rps | Confirmed | `Compressor Speed Target` |
+| `0x2123` | **fan speed target**. Leads the measured speed by 1-2 polls and sits just above it | raw, rpm | Structural | `Fan Speed Target` |
+| `0x2124` | constant `0` | | Unknown | |
+| `0x2125` | constant `1` | | Unknown | |
+| `0x2126` | **condensing temperature**. `condensing - condenser outlet` equals the subcooling exactly | D2C, °C | Confirmed | `Condensing Temp` |
+| `0x2127` | constant `0` | | Unknown | |
+| `0x2128` | **evaporating temperature**. `compressor inlet - evaporating` equals the superheat exactly | D2C, °C | Confirmed | `Evaporating Temp` |
+| `0x2129` | subcooling, a looser copy of `0x212A` | D2C, K | Lead | |
+| `0x212A` | **subcooling** | D2C, K | Confirmed | `Subcooling` |
+| `0x212B` | constant `0` | | Unknown | |
+| `0x212C` | **superheat** | D2C, K | Confirmed | `Superheat` |
+| `0x212D` | expansion valve position, percent | `/10`, % | Confirmed | `EEV Position Status` |
+| `0x212E` | lockout flag, the inverse of `0x2121` | raw | Structural | |
+| `0x212F`-`0x2130` | constant `0` | | Unknown | |
+| `0x2131` | **refrigerant circuit reversed**: `1` exactly while `0x2144` is in `{6,7,8}` | raw, 0/1 | Confirmed | `Defrost Active` |
+| `0x2132`-`0x2136` | constant `0` | | Unknown | |
+| `0x2137` | **de-rated temperature ceiling** ([6.5](#65-de-rated-temperature-ceiling-0x2137)). Which temperature it caps is a Lead | D2C, °C | Confirmed (curve) | `Derated Temp Ceiling` |
+| `0x2138` | constant `1200`: the 120.0 rps at which `0x2002` clamps | `/10`, rps | Lead | |
+| `0x2139` | constant `200`: the 20.0 rps floor of `0x2003` | `/10`, rps | Lead | |
+| `0x213A` | defrost-sequence flag, identical to `0x2006` | raw, 0/1 | Structural | |
+| `0x213B`-`0x213E` | constant `0` | | Unknown | |
+| `0x213F`:`0x2140` | **compressor slew limit**: how fast the speed target may move. `2.0` or `0.2` ([6.7](#67-compressor-slew-limit-0x213f)) | f32, rps/s | Confirmed | `Compressor Slew Limit` |
+| `0x2141` | expansion valve position, echo of `0x2120` | raw | Structural | |
+| `0x2142` | constant `55` | | Unknown | |
+| `0x2143` | constant `525`: the valve's end stop, reached before every defrost | raw, steps | Lead | |
+| `0x2144` | **demand and defrost state machine** ([5.1](#51-the-demand-state-machine-0x2144)) | raw | Confirmed | `Demand State` |
+| `0x2145` | **compressor speed stable time**: seconds since the speed last left a ±3.0% band. Consumed by the frost model ([5.7](#57-the-frost-model-and-the-defrost-decision)) | unsigned raw, s | Confirmed | `Compressor Speed Stable Time` |
+| `0x2146` | **fan target stable time**: seconds since the fan speed target last left a ±3.0% band. Runs whenever the fan target is set | unsigned raw, s | Confirmed | `Fan Target Stable Time` |
+| `0x2147` | **defrost reference heat output**: the clean-coil reference ([5.7](#57-the-frost-model-and-the-defrost-decision)) | unsigned raw, W | Confirmed | `Defrost Reference Heat Output` |
+| `0x2148` | **defrost reference attempt**: which attempt at taking that reference this is. `0`-`4` seen | raw, count | Confirmed | `Defrost Reference Attempt` |
+| `0x2149` | a clamped curve in evaporating temperature, top value `176`. Non-zero exactly when the previous poll's evaporating temperature is at or below -0.50 °C in state `3`. What uses it is unknown | raw | Unknown (gate Structural) | |
+| `0x214A` | constant `0` | | Unknown | |
+| `0x214B` | **frost-model speed term**: about 11.3-12.0 x the raw compressor speed, sampled and held. Rescales the reference `0x2147`. Non-zero only while the frost model is live | unsigned raw | Structural (quantity a Lead) | |
+| `0x214C` | **time since the last defrost** ended. `0` during a defrost, before the season's first, and again from 18.2 h after one: it reaches 65,535, drops to `0` and stays | unsigned raw, s | Confirmed | `Time Since Defrost` |
+| `0x214D` | constant `0` | | Unknown | |
+| `0x214E` | **compressor ramp state**, a bitfield ([5.8](#58-compressor-ramp-state-0x214e)) | bits | Structural | `Compressor Ramp State` (text) |
+| `0x214F` | drive power-stage temperature. Sits 4.5 K above air inlet at part load and 15 K above at 60 rps; non-zero exactly while `0x215C` is | D2C, °C | Lead | |
+| `0x2150`-`0x2152` | constant `0` | | Unknown | |
+| `0x2153` | drive ambient temperature. Sits 3.2-4.8 K above air inlet in every capture; same gate | D2C, °C | Lead | |
+| `0x2154` | constant `0` | | Unknown | |
+| `0x2155` | evaporating temperature one poll late on another scale: `0.6343 x 0x2128 + 175.6` | raw | Structural | |
+| `0x2156` | a linear curve in air inlet temperature, on the same gate as `0x2149`; the two are never non-zero apart | raw | Unknown (gate Structural) | |
+| `0x2157` | `-480` while the fan target is set, `-288` while the circuit is reversed, `0` otherwise. On D2C these read -30.0 and -18.0 °C | raw | Unknown (gate Structural) | |
+| `0x2158` | a pulse about 0.3 s wide at the head of a defrost, caught once | raw, 0/1 | Lead | |
+| `0x2159` | constant `1728` | | Unknown | |
+| `0x215A` | constant `360` | | Unknown | |
+| `0x215B` | constant `0` | | Unknown | |
+| `0x215C` | **demand window**: `150` from the start hand-off until 482 s after the compressor stops, else `0`. The gate for `0x214F` and `0x2153` | raw | Structural | `Demand Window` |
+| `0x215D`-`0x215F` | constant `0` | | Unknown | |
+| `0x2160`:`0x2161` | **defrost capacity loss**: how far the heat output is below the reference, in percent ([6.2](#62-defrost-capacity-loss-0x2160)) | f32, % | Confirmed | `Defrost Capacity Loss` |
+
+### 4.6 Read block `0x2200` (73 registers)
+
+Identity and stored parameters. Only `0x2209`:`0x220A` moves.
+
+| register | identity | scale | status | sensor |
+|---|---|---|---|---|
+| `0x2200`-`0x2202` | constant `1` | | Unknown | |
+| `0x2203`-`0x2205` | **firmware version** `405`, `4`, `7`, confirmed against the unit | raw | Confirmed | `Firmware Version` (text) |
+| `0x2206`-`0x2207` | constant `0xFFFF` | | Unknown | |
+| `0x2208` | constant `600`. One of two 600 s constants (with `0x221B`); the frost gate and the defrost re-arm interval are both 600 s | raw, s | Lead | |
+| `0x2209`:`0x220A` | **flow minus return, uncalibrated**. Within 0.012 K of the certified heat meter | f32, K | Confirmed | `Delta T` |
+| `0x220B` | constant `1` | | Unknown | |
+| `0x220C`-`0x2217` | constant `0` | | Unknown | |
+| `0x2218` | constant `13` | | Unknown | |
+| `0x2219` | constant `16` | | Unknown | |
+| `0x221A` | constant `300`: the frost model's 300 s blanking window | raw, s | Lead | |
+| `0x221B` | constant `600`; see `0x2208` | raw, s | Lead | |
+| `0x221C` | constant `0` | | Unknown | |
+| `0x221D`:`0x221E` | **post-stop lockout**, `480.0` | f32, s | Structural | `Lockout Duration` |
+| `0x221F` | constant `17766` | | Unknown | |
+| `0x2220` | constant `1` | | Unknown | |
+| `0x2221` | constant `0` | | Unknown | |
+| `0x2222` | constant `1` | | Unknown | |
+| `0x2223`:`0x2224` | stored constant `120.0` | f32 | Structural | |
+| `0x2225` | constant `50` | | Unknown | |
+| `0x2226`-`0x2236` | readback of the serial number, characters 2-28 | ASCII | Confirmed | |
+| `0x2237`-`0x2246` | a second 30-character identity string, padded with `X`, not present in block `0x1200`. Which part it names is unknown | ASCII | Structural | |
+| `0x2247` | constant `1` | | Unknown | |
+| `0x2248` | constant `0` | | Unknown | |
+
+---
+
+## 5. State machines and sequences
+
+Times are in seconds. A poll is 1.2 s, so every timing carries that
+granularity. Counts such as "10 of 10" are over the captures described in
+[section 9](#9-where-these-findings-come-from).
+
+### 5.1 The demand state machine (`0x2144`)
+
+`Demand State`. One machine covers demand and defrost.
+
+| state | meaning | how long |
 |---|---|---|
-| constant | 201 | the same single value in every capture |
-| **configuration** | **1** | constant within each capture but *different between them* - `0x1109`, the flow/return calibration, which `ebusd` names outright |
-| regime-dependent | 49 | moves in some captures and is frozen in others - alive only in a demand mode or operating state the rest never reached |
-| always moving | 20 | varies in every capture, standby included |
+| `0` | idle | |
+| `1` | pre-run: pump and fan running, compressor not yet commanded | 60 s |
+| `3` | running | |
+| `4` | fan run-on after the compressor has stopped | 64 s or 604 s ([5.4](#54-stop-sequence)) |
+| `5` | defrost: prepare | 44-46 s |
+| `6` | defrost: valve reverses | 10-11 s |
+| `7` | defrost: melt | 236-412 s |
+| `8` | defrost: valve returns | 10 s |
+| `9` | defrost: settle | 5-6 s |
+| `11` | defrost: recovery | 79-80 s |
 
-So 201 is the number of registers nothing in these captures has moved - not
-the number that cannot move. The 49 regime-dependent ones are the proof:
-`0x2149` and `0x2156` looked like hard zeros until a cold capture arrived,
-and `0x2137` held 80.00 °C in four sessions before de-rating in the fifth.
-Read every "constant in every capture" note below as exactly that, and
-nothing stronger.
+Transitions: `0 -> 1 -> 3 -> 4 -> 0` for a demand, and
+`3 -> 5 -> 6 -> 7 -> 8 -> 9 -> 11 -> 3` for a defrost. State `10` has never
+been seen. A change between heating and hot water happens inside state `3`.
 
-The standby session bounds how much of the map is *operational* rather than
-static: only the 20 always-moving registers vary at all with the heat pump
-idle - `0x1005`, `0x1007`-`0x1009`, `0x1019`, `0x2007`-`0x200F`, `0x2126`,
-`0x2128`, `0x212C`, `0x2155`, `0x2209`, `0x220A`.
+Other registers are projections of this machine:
 
-> **A warning about correlations measured in standby.** With the
-> compressor off, every temperature in the machine decays to ambient, so
-> *every* temperature register correlates with outside temperature at
-> r > 0.93 - including ones already confirmed to be something else
-> entirely. A high positive correlation measured in standby is that
-> shared-baseline coincidence, not evidence of identity. `0x1019` is the
-> one exception, and only because its correlation is *negative*: a register
-> that moves opposite to ambient cannot be explained by everything decaying
-> toward ambient together.
+| register | equals |
+|---|---|
+| `0x2006`, `0x213A`, `0x2000 == 5`, `0x1000 == 5` | state in `{5,6,7,8,9,11}` |
+| `0x2131` | state in `{6,7,8}` |
 
-> **And one about zeros.** A first pass matched most unknowns to
-> "compressor speed x 0.1" with a median absolute difference of exactly 0.0.
-> That is nonsense: both series are zero for most of a session that is half
-> idle, so the median was measuring the idle stretch and nothing else. Every
-> comparison here is taken over compressor-running samples with the unknown
-> non-zero.
+### 5.2 Three levels of "on"
 
-## Direction: which registers are telemetry and which are commands
+Three signals describe activity at different levels, and they are not
+interchangeable.
 
-Each block's data appears in exactly one frame kind, and the other kind of
-that pair carries no data at all:
-
-| block | data rides in | direction |
+| signal | what it follows | typical span |
 |---|---|---|
-| `0x1000` / `0x1100` / `0x1200` | **write request** (acks carry nothing) | controller -> outdoor unit |
-| `0x2000` / `0x2100` / `0x2200` | **read response** (requests carry nothing) | outdoor unit -> controller |
+| the house circuit's own heat request (controller side, not on this bus) | the house wants heat | hours to days |
+| `Run Phase` (`0x2015`) | the heat pump's heating episode | spans many demand cycles |
+| `Demand Mode` (`0x1000`) | the outdoor unit is asked to run now | tens of minutes to hours |
 
-So a `0x1xxx` register is something the controller **commands**, and a
-`0x2xxx` register is something the outdoor unit **reports**. That is a hard
-constraint on identity: every `0x2xxx` unknown is a measurement or a value
-computed *on the outdoor unit*, which rules out anything sensed indoors -
-the cylinder temperature above, but equally room temperature, zone state,
-or any controller-side setpoint.
+Inside one long heating request the demand cycles on and off (eight times in
+18 hours on a cold day) while the run phase stays at `1`. A run phase of `1`
+therefore does not mean the compressor is running. Use `Demand Mode` or
+`Compressor Speed` for that.
 
-## The demand cycle, timed
+### 5.3 Start sequence
 
-Two complete domestic-hot-water cycles were captured. They differ in length -
-76 and 93 minutes of compressor run - but every transition below landed at
-the **same offset in both**, to within the ~1.2 s poll granularity. Offsets
-are from the `demand_mode` edge.
+Offsets from the poll in which `Demand Mode` leaves `0`. Identical at 10 of 10
+starts, for heating and hot water alike.
 
 | offset | event |
 |---|---|
-| +0 s | `demand_mode` 0 -> 2 and `requested_flow_temp` 20 -> 75 in the *same* write |
-| +1 s | `run_phase` 0 -> 1 |
-| +2 s | `requested_flow_temp` 75 -> 80; `demand_state` (`0x2144`) 0 -> 1; building pump begins ramping |
-| +9 s | fan 1 starts |
-| +61 s | the handoff cluster steps together: `0x2122` 0 -> 500, `0x2002` 0 -> 600, `0x2003` 0 -> 500, `0x2121` 1 -> 0, `0x212E` 0 -> 1 |
-| +67 s | compressor speed leaves 0 - **exactly 6 s after the commanded target**, in both cycles |
+| 0 | `Demand Mode` 0 -> 1 or 2. `Requested Flow Temp` takes its demand value. The pump is commanded |
+| +1.2 | the outdoor unit accepts: `0x2000` follows, `Building Circuit Flow Target` 0 -> 1205, `Fan Speed Target` 0 -> 220, `Run Phase` -> 1 |
+| +2.4 | `Demand State` 0 -> 1, `0x2157` -> -480, `Fan Target Stable Time` starts |
+| +8 to +10 | the fan turns |
+| +61.2 | **hand-off**: `Compressor Speed Target` 0 -> 50.0 rps, the speed window opens at [50, 60] rps, `0x2121` 1 -> 0 |
+| +62.4 | `Demand State` 1 -> 3; the drive wakes (`Mains Voltage` leaves 0) |
+| +63.6 | `Demand Window` 0 -> 150; the drive temperatures start reading |
+| +67 to +70 | the compressor turns. `Compressor Ramp State` goes `Starting` -> `Ramping up` |
+| +89 to +91 | the compressor reaches 50 rps; `Compressor Ramp State` -> `At speed` |
+| +80 to +91 | `Heat Output` leaves 0, once warm water reaches the flow and return sensors |
+| +241 | **start window ends**, 180 s after the hand-off: `Compressor Slew Limit` 2.0 -> 0.2, the speed window is released to its weather-dependent bounds, and the controller modulates |
 
-So a demand does not start the compressor: it starts a **60-second prerun**
-of pump and fan, and only then is a speed commanded. The 6 s lead of
-`0x2122` over `0x2010` is what makes `compressor_speed_target` a *command*
-rather than a third echo.
+So a demand does not start the compressor. It starts a 60 s pre-run of pump
+and fan, then three minutes at a fixed 50-60 rps, and only then free
+modulation. The expansion valve rests at 250 steps while idle and through the
+pre-run.
 
-The stop side, offsets from the `demand_mode` clear:
+
+### 5.4 Stop sequence
+
+Offsets from the poll in which the compressor speed reaches 0.
 
 | offset | event |
 |---|---|
-| +0 s | `demand_mode` 2 -> 0 and `requested_flow_temp` 80 -> 0 in the same write |
-| +1 s | `0x2122` commanded target -> 0; `0x2002`, `0x2003` return to idle; `demand_state` -> 4, then 0 |
-| +20 s | compressor speed reaches 0 (it coasts down; the command went to 0 nineteen seconds earlier) |
-| +84 s | building pump -> 0 |
-| +85 s | `run_phase` 1 -> 6 (85 s after a hot-water cycle, 68 s after a space-heating episode ends - see below) |
-| +86 s | fan 1 -> 0 |
-| +481 to +504 s | `0x2121`, `0x212E` and `0x215C` return to their idle values, within a second or two of each other |
-| +491 s | `run_phase` reaches 0 |
+| -2 to -23 | `Demand Mode` -> 0. One poll later `Compressor Speed Target` -> 0 and `Compressor Slew Limit` -> 2.0. The compressor coasts down: 2 s from 20-30 rps, about 20 s from 60 rps. `Compressor Ramp State` shows `Ramping down to stop` |
+| 0 | compressor at 0. `Demand State` 3 -> 4, the speed window closes, `Compressor Ramp State` -> `Off`, **the 180 s countdown `0x211C` starts at 179** |
+| +25 to +46 | refrigerant high and low pressure have equalised |
+| +64 **or** +604 | **end of the fan run-on**: `Fan Speed Target` -> 0, `0x2000` -> 0, `Building Circuit Flow Target` -> 0, `0x2157` -> 0; one poll later `Demand State` 4 -> 0 and the fan stops |
+| +180 | `0x211C` reaches 0. Nothing else on the bus changes |
+| +480 | **lockout ends**: the drive sleeps (`Mains Voltage` and the power echo `0x2018` -> 0), `0x2121` -> 1, `0x212E` -> 0 |
+| +482 | `Demand Window` -> 0; the drive temperatures stop reading |
 
-**`run_phase` 6 is a lockout, not an overrun.** Sampled mid-window,
-everything is already stopped - compressor 0, fan 0, pump 0, building-circuit
-flow 0 - and electrical draw is 7-8 W, the standby figure. The lockout is a
-stored parameter: `0x221D`:`0x221E` is the float **480.0**, and timed from
-the moment compressor speed reaches 0 the lockout measures 480-482 s over
-six clears (published as `lockout_duration`). Timed from the demand clear
-it looks like 482-503 s, but that spread is just the compressor's variable
-coast-down.
+**Fan run-on length depends on the air temperature.** 64 s at an air inlet of
+9.6 °C or above (6 of 6 stops), 604 s at 6.1 °C or below (4 of 4). The
+threshold lies between the two. `Demand State` 4 lasts exactly as long.
 
-`run_phase` leaves 6 by a fixed five-second exit path on the way to idle: a
-one-second code (`2` or `1`), then code `4` for exactly four seconds, then
-`0`. That is where the "transitional codes" on `0x2015` come from - they are
-not rare glitches but a deterministic shutdown sequence.
+**The 180 s countdown** is started by every compressor stop and by nothing
+else (10 of 10, none apart). What it guards cannot be seen: nothing changes at
+its expiry and no demand has ever returned within 1,667 s of a stop. The
+likeliest reading is the drive's own minimum off-time, underneath the
+controller's 480 s lockout.
 
-## `run_phase` tracks the heating episode, not the demand cycle
+**The pump.** In milder weather the pump stops with the fan run-on. In
+colder weather it keeps circulating between demands at a fixed 70-72%
+command (about 990 l/h), with no flow target.
 
-The timed table above comes from captures in which one `demand_mode` cycle
-*was* the whole heating episode, so `run_phase` appeared to follow
-`demand_mode` one-for-one. Over a longer stretch of cold-weather operation
-it does not:
+When the heating episode itself ends, `Run Phase` goes 1 -> 6 at the end of
+the fan run-on and unwinds as in [5.9](#59-run-phase-0x2015).
 
-| signal | behaviour over ~22 h |
+
+### 5.5 Changing between heating and hot water
+
+The compressor keeps running. Offsets from the poll in which `Demand Mode`
+changes.
+
+**Heating to hot water** (2 of 2):
+
+| offset | event |
 |---|---|
-| `ctlv3 hc1status` (the house circuit's own request) | one unbroken 18-hour request |
-| `demand_mode` (`0x1000`) | cycled `1`/`0` **eight times** inside that window, runs of 61-374 min separated by 22-35 min off periods |
-| `run_phase` (`0x2015`) | held `1` the whole time, through every one of those `demand_mode` cycles |
+| 0 | `Demand Mode` 1 -> 2, `Requested Flow Temp` -> its hot-water value. `Compressor Slew Limit` -> 2.0 and the speed window is fixed at [30, 50] rps; the speed is driven up towards 50 |
+| +91.2 | **the diverter valve moves**: `0x2000` 1 -> 2 and `Hot Water Mode Active` 0 -> 1 in the same poll, the circuit flow jumps (1150 -> 1440 l/h), `Fan Speed Target` -> 650 |
+| +110 | the window is released and `Compressor Slew Limit` -> 0.2. The pump is regulated down until the flow sits on its 1205 l/h target |
 
-`run_phase` left `1` only when the house-circuit request itself ended,
-going to `6` at +68 s and then running the usual lockout. So the three
-signals sit at different levels:
+**Hot water to heating** (2 of 2):
 
-- **`hc1status`** - the house is calling for heat (hours to days).
-- **`demand_mode`** - the outdoor unit is running *now*, cycling within that
-  call as the flow setpoint is met (tens of minutes to hours).
-- **`run_phase`** - the heat pump's own episode state, which spans many
-  `demand_mode` cycles and only unwinds when the call above it ends.
-
-A `run_phase` of `1` therefore does **not** mean the compressor is running,
-and should not be used as a "heat pump is on" signal - `demand_mode`,
-`demand_state` or `compressor_speed` is the right one for that.
-
-## What the expansion valve actually controls
-
-This machine regulates **subcooling**, not superheat. That is worth stating
-plainly, because a near-zero superheat looks alarming if you assume it is the
-controlled variable. Over a space-heating cycle, from `ebusd`'s own setpoint
-and actual fields:
-
-| | setpoint | actual |
-|---|---|---|
-| subcooling | `0.0` -> `6.44` -> `9.81` -> `7.56` -> `7.06` -> `6.94` over 40 min | `6.94` - tracking it exactly |
-| superheat | `0.0`, unchanged for the whole cycle and for days before it | `0.19`-`0.31`, sitting just above zero |
-
-A setpoint that moves five times in forty minutes while the measurement
-follows it is a controlled variable. A setpoint pinned at `0.0` that never
-moves is not. The valve holds subcooling and lets superheat land wherever
-it lands, which is just above zero - a deliberate design, since superheated
-vapour transfers heat poorly and coil area spent making superheat is wasted
-evaporator.
-
-So **`superheat` (`0x212C`) is not a health signal on this unit.** It is
-supposed to be ~0; an occasional single-count dip to -0.0625 °C is D2C
-quantisation jittering around zero, not liquid return. What *would* matter
-is subcooling departing from its setpoint, or a sustained and materially
-negative superheat. Neither setpoint is mapped to a register yet.
-
-## Two registers close the refrigerant cycle (`0x2126`, `0x2128`)
-
-Both are in the `0x2100` read response, so both are outdoor-unit
-measurements. Each was tested against an *identity* rather than a
-correlation - if the register is the quantity, the residual is zero, and no
-amount of shared shape can fake that:
-
-| test | identity | median residual | p90 |
-|---|---|---|---|
-| is `0x2126` the condensing temperature? | `0x2126/16 - cond_outlet/16 == subcooling` | **+0.000 K** | 0.062 K (one LSB) |
-| is `0x2128` the evaporating temperature? | `compr_inlet/16 - 0x2128/16 == superheat` | **+0.000 K** | 0.125 K (two LSB) |
-
-Both close to the quantisation step over 8,815 running samples. The physics
-agrees independently:
-
-- `0x2128` spanned **-12.56 to +11.62 °C**, and air inlet minus evaporating
-  has a median of **+4.56 K** (p10 +3.12, p90 +7.19) - a textbook
-  evaporator approach.
-- `0x2126` spanned **8.88 to 47.62 °C** in space heating, and condensing
-  minus flow has a median of **+1.75 K** (p10 +1.12, p90 +2.00) - a textbook
-  condenser approach.
-
-These are the first two registers on this bus with no `ebusd` counterpart at
-all, and together with the confirmed pressures, superheat and subcooling
-they complete the refrigerant cycle. Published as `condensing_temp` and
-`evaporating_temp`.
-
-## `0x2137` is a frost de-rate on an 80.00 °C ceiling
-
-It is pinned at exactly `0x0500` (1280 = 80.00 °C at `/16`) in every idle
-sample **and in every running sample where the evaporating temperature is
-at or above 0 °C**. It only ever leaves the ceiling when the evaporator is
-below freezing:
-
-| evaporating temperature | running samples | of which dipped |
-|---|---|---|
-| at or above 0 °C | 8,446 | **0 (0.0%)** |
-| below 0 °C | 369 | 104 (28.2%) |
-
-Inside the dips it tracks the evaporating temperature at rho +0.994, and
-the dips span evaporating -12.56 to -5.00 °C. Fitting the shortfall:
-
-    0x2137/16 = 80.00 + 0.069 x T_evap  °C       (R2 0.774)
-
-which puts the knee near **-2.2 °C evaporating** and the deepest observed
-excursion at 1.06 K below the ceiling. That is why the warmer captures call
-it a constant: the evaporator never went near -2 °C.
-
-Read as a **maximum temperature that is de-rated as the evaporator frosts**.
-80.00 °C is exactly the flow setpoint hot water drives (see `0x1019`), which
-makes "maximum flow temperature" the leading candidate, though the de-rate is
-small enough that a computed envelope limit fits equally well. Published as
-`derated_temp_ceiling` to be watched through a cold spell; the identity is a
-reading, the behaviour is the fact.
-
-## `0x201B`-`0x2021` is one record
-
-Read as a group rather than individually, this range stops looking like
-seven unrelated unknowns. **Quantisation splits it cleanly:**
-
-| register | GCD of all values | max | max/100 |
-|---|---|---|---|
-| `0x201B` | **50** | 12,650 | 126.50 |
-| `0x201C` | **100** | 10,100 | 101.00 (`load_step`) |
-| `0x201D` | 1 | 2,393 | - (electric-power echo) |
-| `0x201E` | **50** | 11,400 | 114.00 |
-| `0x201F` | **100** | 9,800 | 98.00 |
-| `0x2020` | 1 | 1,283 | 12.83 |
-| `0x2021` | 100 | - | `0x201C` + 1600 |
-
-So `0x201B`, `0x201E` and `0x201F` carry the same x100 encoding as
-`0x201C` - four percentage-like values in a row, resolved to 1.0 or 0.5.
-Only `0x201D` and `0x2020` are continuous, and `0x201D` is the known power
-echo.
-
-**They update as a unit, at two speeds.** When any one of them changes,
-`0x2020` is in the same frame 92-97% of the time. But the group divides by
-rate: `0x201B`, `0x201D`, `0x201E` and `0x2020` change 7-10x more often than
-`0x201C`, `0x201F` and `0x2021` - and the slow trio is exactly the set
-quantised to 100.
-
-**`0x201C` is a percentage** (`load_step`). It is a multiple of 100 in
-100.000% of 40,608 samples across every capture, the highest value ever
-seen is **10,100 - exactly 101**, and `0x2021 - 0x201C` is exactly 1600 in
-99.66% of them. What it is a percentage *of* is **not** established, and the
-obvious guesses fail: `ceil(4 x power / 100)` matches 69.6% of
-space-heating samples but only 2-4% of hot-water ones, so "100% = 2500 W
-input" does not survive a hot-water cycle, and compressor speed sits a flat
-7 rps away from it. It is not current either, and there is no voltage
-register on this bus: all 271 were scanned for one sitting in a mains
-(200-270) or DC-bus (330-430) band and varying like a supply, and the only
-hits are single-valued constants or already-identified temperatures.
-
-**`0x2020` is a second flow *reading*** (`flow_rate_secondary`), and the
-one register of the group whose behaviour is pinned down. It is **exactly 0
-in every sample where the pump is stopped**, and non-zero whenever the pump
-runs - including pump-only periods with the compressor off. So it follows
-the hydraulic circuit, not the refrigerant cycle. Against the confirmed
-`building_circuit_flow` it is a near-copy with a **mode-dependent factor**:
-
-| mode | `0x2020 / 0x2014` | p5 - p95 |
-|---|---|---|
-| space heating (two captures) | **1.0381**, **1.0376** | 1.027 - 1.049 |
-| hot water (three captures) | **0.9693**, **0.9675**, **0.9810** | 0.956 - 0.993 |
-| pump-only idle | 0.9767 | 0.967 - 1.008 |
-
-One capture contains both modes, and the ratio steps between them **inside
-that capture**, so the factor switches with the demand - i.e. with the
-diverter valve - rather than drifting. Within a mode it holds across flow
-bands.
-
-Against an MID-certified heat meter on the same circuit, `0x2014` sits
-0.6-1.0% *above* the meter in both modes - what two independent meters on
-the same water look like - while `0x2020` departs by -4.9% to +0.8%
-depending on mode. So `building_circuit_flow` is correctly named and is the
-flow to use. `0x2020` cannot be a second flow either: this is a single
-series loop with one pump, so whatever the diverter is doing, the same water
-passes the heat pump and the active branch.
-
-**Pump speed is ruled out**, which was the obvious way to have one flow and
-two registers. The affinity laws would make pump power the cube of speed;
-`log(pump power)` against `log(0x2020)` has exponents of 0.58, 1.13, 1.21,
-1.26 and -0.02 across the captures, never near 3, and flow against it wants
-intercepts of -333 to +216 l/h rather than zero.
-
-The departure from the building circuit is near-symmetric - **+3.8%** under
-space heating and **-3.3%** under hot water - which reads as one signed
-correction applied per flow path. The leading explanation is that both
-registers carry the **same single flow** and one has a path-dependent
-calibration applied (a flow sensor's calibration does depend on the pipework
-upstream of it, and the diverter changes that). Untested.
-
-Why earlier sweeps missed it: while the machine runs the pump is held at a
-fixed speed, so `0x2014` and `0x2020` are *both* near-constant, and
-correlating two constants measures nothing. The right tool was a ratio, not
-a correlation.
-
-## 32-bit floats on this bus, starting with `0x2209`:`0x220A`
-
-Every early test treated each register as an independent 16-bit scalar,
-which is exactly why this pair resisted for so long: neither half means
-anything alone. Taken together as a **big-endian IEEE-754 single** (high
-word first), they decode to a finite, sanely-scaled value in **24,228 of
-24,228 samples** - a random 32-bit pattern would be a denormal, an infinity
-or an absurd magnitude far more often than not. What it carries is
-**flow minus return**:
-
-    float = 1.00632 x (flow - return) + 0.25225
-    R2 0.9969, median residual 0.019 K, over 11,751 running samples
-
-and the offset is not noise. `float - (flow - return)` has a median of
-**exactly +0.2500 K**, which is 4/16 - precisely the `-4` that
-`ebusd`'s `hmux0_calibrationvlrl` and register `0x1109` held at the time. So
-the float is the differential *before* the flow/return calibration and the
-D2C `flow_temp`/`return_temp` registers carry it *after*:
-
-    delta_t - (flow_temp - return_temp)  =  -flow_return_calibration  K
-
-The identity held again when the calibration later moved to `-5`
-(0.3125 K), and on a second, unrelated unit: the aroTHERM plus 7 kW dump in
-[#2](https://github.com/thoutenbos/esphome-arotherm-modbus/issues/2) has a
-calibration of `+5` and a `delta_t` 0.31 K below `flow - return`.
-
-**The uncalibrated figure is the one that agrees with the certified meter.**
-Over ten steady hours at minimum modulation:
-
-| heat-pump-side figure | vs certified heat meter delta T | as a fraction |
-|---|---|---|
-| `delta_t` (the float) | median **-0.012 K** | **-0.6%** |
-| `flow_temp - return_temp` (calibrated D2C) | median **-0.262 K** | **-14.1%** |
-
-So the calibration is not a correction toward truth - it moves the
-machine's own differential *below* the certified meter by
-`calibration / 16` K, which at the ~1.8 K delta of minimum modulation is a
-14% under-read, and anything computed from the pair inherits it. The float
-is also continuous, where the D2C pair quantises to 1/16 K (3.5% of that
-1.8 K delta). Published as `delta_t`, and used for the example config's
-`Thermal Power Delivery`.
-
-**It is the only float among the registers that move.** All 268 adjacent
-pairs across all six blocks were swept with the same test, skipping pairs
-where either half is constant (a constant high word is just a narrow scalar,
-not evidence of a float), and exactly one pair passed. But that rule is
-right for telemetry and exactly wrong for stored parameters, which are
-constant by definition - run the other way it finds three more, all
-constants or two-state:
-
-| pair | value(s) | meaning |
-|---|---|---|
-| `0x213F`:`0x2140` | `2.0` at idle, `0.2` while a demand runs | unresolved - a control period or a deadband would both fit |
-| `0x221D`:`0x221E` | `480.0` | the post-stop lockout in seconds - published as `lockout_duration` |
-| `0x2223`:`0x2224` | `120.0` | a parameter; what it configures is unknown |
-
-## The flow/return calibration moves on its own (`0x1109`)
-
-`0x1109` is the one register whose value *changed between captures*:
-`0` in the three late-summer sessions, `0xFFFC` (**-4** signed) in the two
-autumn ones - and `ebusd` reads `CalibrationVLRL` as `0` and `-4` over the
-same two groups. Its history on this installation is `0` all summer, then
-`-1`, `-4` and `-5` within about four weeks of the heating season starting,
-each a single clean step; the last change was reported by this component
-and by `ebusd` at the same time, over two separate buses.
-
-**The machine writes this itself** - it is not an installer setting, and
-`ebusd`'s definition carries only a read row for it. What drives it is not
-known, and the obvious guess is wrong: it is not simply the offset the unit
-sees between its probes at standstill (standstill `delta_t` would give +1,
--3, -10 and -13 counts where the stored values were 0, 0, 0 and -4).
-
-Note the units: `ebusd` declares the parameter in K with no divisor, so it
-prints the raw value, but the machine applies it in **1/16 K** steps - the
-D2C LSB. `-5` means **-0.3125 K**, not -5 K. It is published as
-`flow_return_calibration`, scaled `/16`, because every step widens the gap
-between `delta_t` and `flow_temp - return_temp` and nothing else announces
-it.
-
-## Two run timers (`0x2146`, `0x2145`)
-
-Both sit at exactly zero whenever the compressor is stopped and rise while
-it runs. Fitting each against the wall clock, one row per uninterrupted run:
-
-| register | runs fitted | slope | intercept | R2 | median residual |
-|---|---|---|---|---|---|
-| `0x2146` | 4 | 0.9997 | -0.1 to -0.5 s | 1.0000 | **0.2-0.4 s** |
-| `0x2145` | 4 | 0.9987-0.9990 | -72 to -308 s | 1.0000 | 1.0-2.6 s |
-
-So `0x2146` is **seconds since the compressor started**, to within half a
-second over runs as long as 5 h - published as `compressor_run_time`. (On
-the aroTHERM plus 7 kW dump in #2 it reads 1127-1133 and counts up with the
-compressor stopped, so it may mean something else on that unit.)
-
-`0x2145` is a different animal. It also reads 0 at the compressor start, but
-within one run it resets 27-49 times, cycling 0..7 every ~8 s through the
-opening minutes before free-running to thousands - the apparent intercept
-above is an artefact of fitting a line through those resets. It behaves
-like a timer zeroed whenever some condition fails and allowed to accumulate
-only once it holds. The condition is in the speed-control path: compressor
-speed changes in 84% of reset frames against a 3% baseline. But it is not
-simply "time since the speed changed": only about one speed change in ten
-produces a reset, and the size of the change does not separate them.
-
-## Remaining leads and open questions
-
-Re-fitted against all five captures rather than one, with every relation
-checked for the *same coefficients in every capture*. That test matters more
-than R2: a single-session fit put `0x214F` at R2 0.98 against compressor
-outlet temperature and the next capture gave 0.19. Three relations survive:
-
-| register | relation | per capture | verdict |
-|---|---|---|---|
-| `0x2155` | `0x2155/10 - evaporating_temp` = **+17.6 to +17.8 K** | R2 0.9993-0.9999 | the evaporating temperature on a `/10` scale with an offset zero |
-| `0x2141` | **equals** `0x2120` | equal in 99.2-100% of samples | an echo of the absolute EEV position |
-| `0x2021` | **equals** `0x201C` + 1600 | exact in 99.5-100% of samples | not an independent quantity |
-
-`0x2155` was previously recorded as `6.5843 x lowpress - 69.1`, and as "not
-the evaporating temperature" because it failed the superheat identity by a
-median -8.5 K. Both were right about the data and wrong about the cause: the
-identity failed by a constant because the register carries a fixed offset.
-
-**`0x214F` and `0x2153` remain unexplained**, but are characterised well
-enough to rule out most of the field:
-
-- **Neither is a sensor.** Both read *exactly* zero whenever the compressor
-  is stopped and are never zero while it runs. A thermistor reads ambient
-  when the machine is off, not 0.
-- **Both are smooth, and start seeded.** At the first running sample each
-  jumps from 0 to a value that scales with how warm the machine already is,
-  then climbs monotonically for well over 90 s, long after compressor speed
-  has plateaued.
-- **Both follow condensing temperature across modes**, with a gap that grows
-  with lift - how discharge superheat behaves.
-
-| hypothesis | what rules it out |
+| offset | event |
 |---|---|
-| subcooling or superheat **setpoint** | slope 17.4 against `SollwertUnterkuehlung` where a /64 copy needs 64.0; R2 0.36 |
-| a rescaled copy of compressor outlet temp `0x2008` | raw-to-raw slope swings 0.36 to 0.56 between captures; a fixed-point rescale gives one slope |
-| a protected discharge gas temperature | no ceiling in the distribution, and /4 = 174 °C is not physical |
-| a low-pass filtered copy of any mapped register | sweeping tau 0-1800 s barely moves the fit |
-| a per-run accumulator like `0x2145`/`0x2146` | neither is monotonic |
+| 0 | `Demand Mode` 2 -> 1, `Requested Flow Temp` -> its heating value. `Compressor Slew Limit` -> 2.0, the window is fixed at [30, 50] rps, and the speed is wound down from 60 rps (`Compressor Ramp State` shows `Ramping down`) |
+| +91.2 | **the diverter valve moves**: `0x2000` 2 -> 1 and `Hot Water Mode Active` 1 -> 0, `Fan Speed Target` drops to its heating value, the flow dips (1205 -> 950 l/h) and recovers within about 15 s. `Building Circuit Flow Target` starts easing from 1205 towards 1098 |
+| +110 | the window is released and `Compressor Slew Limit` -> 0.2 |
+| +125 | 34 s after the valve moved, the return temperature starts to collapse as the last cylinder-loop water leaves the heat exchanger, and the flow target snaps back to 1205 |
 
-**What would settle it: a defrost.** No capture contains one. In defrost
-the cycle reverses: the outdoor coil becomes the condenser, evaporating and
-condensing swap roles, and every refrigerant-side quantity inverts while
-every water-side one does not. A register that follows the inversion is
-refrigerant-side; one that ignores it is not. A winter capture will provide
-that for free.
+A hot-water charge that ends with no heating demand behind it stops instead,
+by the stop sequence, and `Hot Water Mode Active` clears 84-86 s after the
+demand.
 
-**Refrigerant-side quantities a monoblock reports that are still unmapped**,
-as candidates to test against a defrost capture: true discharge gas
-temperature (`0x2008` tops out at 54 °C, far too cool to be it); inverter
-heatsink or IPM temperature; DC bus voltage and compressor phase current;
-the subcooling and superheat *setpoints*; target condensing temperature;
-refrigerant mass flow; defrost state and counters; compressor envelope limit
-flags.
 
-## Are any registers packed bitfields?
+### 5.6 Defrost sequence
 
-No. Prompted by `ebusd`'s own `Status07`, which packs a heat pump's status
-into labelled bits, every bit of all 271 registers was tested against six
-known binary states derived from already-confirmed registers (compressor
-running, demand asserted, fan running, pump running, run phase active /
-post-run).
+The outdoor unit decides ([5.7](#57-the-frost-model-and-the-defrost-decision))
+and the controller acknowledges: `0x2000` goes to `5` and the controller's
+`Demand Mode` follows 0.19 s later. Four defrosts were captured and all four
+ran identically except for the length of the melt.
 
-The naive test is worthless, and it is worth recording why: it returns 41
-"flag bits" at over 99% agreement, but a register that goes from zero to a
-large value has *bits* that switch with it, so every bit of compressor
-speed, fan speed or low pressure "matches" the state perfectly. What settles
-it is asking whether the register is a flag word at all. Across an active
-session only three unknown registers take a small enough set of values to be
-one, and each is a whole-register two-state value:
+| `Demand State` | length | what happens |
+|---|---|---|
+| `5` prepare | 44-46 s | `Defrost Sequence` sets. The frost model is zeroed in the first poll. The compressor is wound back to 28.0 rps and the expansion valve driven to its 525-step stop. `Compressor Slew Limit` -> 2.0 and the speed window closes: the defrost runs its own speed schedule |
+| `6` reverse | 10-11 s | `Defrost Active` sets and the four-way valve reverses: within two polls the high-low pressure spread collapses from 5.3-5.5 bar to 0.2-1.1 bar. The fan stops 49-50 s after the sequence began. `0x2157` reads -288 |
+| `7` melt | 236-412 s | the outdoor coil is the condenser. The compressor is stepped up in stages, 40 -> 50 -> 55 -> 65 -> 70 -> 80 rps, each a `Ramping up`. Heat is taken from the house: the flow temperature falls |
+| `8` return | 10 s | the compressor is wound down (`Ramping down`), the fan target returns and the valve switches back |
+| `9` settle | 5-6 s | `Defrost Active` clears at the bottom of the ramp, near 50 rps |
+| `11` recovery | 79-80 s | normal circuit, compressor at 60.0 rps, fan running. Ends with the flow back at 26-27 °C |
+| `3` | | `Defrost Sequence` clears, 85-87 s after the fan restarted. `Time Since Defrost` starts counting from 1. `Compressor Slew Limit` -> 0.2 |
 
-| register | values | tracks | standby |
-|---|---|---|---|
-| `0x1012` | `0`, `1` | pump running (99.98%) | constant `0` |
-| `0x2000` | `0`, `2` | `demand_mode` echo (99.33%) | constant `0` |
-| `0x2001` | `0`, `1205` | pump running (99.98%) | constant `0` |
+Everything but the melt is fixed: 135-139 s of overhead per defrost.
+`Defrost Sequence` brackets the whole event and is the signal to use for "heat
+is being taken out of the house". `Defrost Active` brackets only the reversed
+circuit.
 
-So this bus carries no `Status07`-style packed status word.
+### 5.7 The frost model and the defrost decision
+
+The machine defrosts on demand, by comparing the heat it delivers with what it
+delivered when the coil was clean. All of it is visible on the bus.
+
+**Stage 1: the gate.** The frost model goes live once the evaporating
+temperature has been continuously at or below -0.50 °C, with the compressor
+running and no defrost in progress, for **600 s**. The frost-model speed term
+`0x214B` becomes non-zero at that moment and returns to zero the moment the
+coil warms through the gate. Two captures show near misses of 571 and 592 s,
+and the model never went live in them.
+
+**Stage 2: the re-arm interval.** `Defrost Reference Attempt` (`0x2148`) goes
+`0 -> 1` when the model is live **and** `Time Since Defrost` has reached 600.
+That is a minimum of 600 s between the end of one defrost and the start of
+measuring for the next. Before the season's first defrost the counter stays at
+`0` and the next stages proceed without it.
+
+**Stage 3: taking the reference.** The reference needs a steady compressor.
+
+1. When `Compressor Speed Stable Time` reaches **60 s**, the speed term
+   `0x214B` is sampled.
+2. If the speed then stays inside its ±3% band for a further **180 s**, the
+   reference arms: `Defrost Reference Heat Output` (`0x2147`) takes the **mean
+   of `Heat Output` over those 180 s**.
+3. If the speed leaves the band first, `Defrost Reference Attempt` goes up by
+   one. The next sample waits for **150 s** of stable speed, again followed by
+   the 180 s.
+
+`Defrost Reference Attempt` therefore records how many tries it took. `1`
+means the first try; values up to `4` have been seen. A high count means the
+reference was taken late, with some frost already on the coil.
+
+**Stage 4: tracking.** Once armed, `Defrost Capacity Loss`
+(`0x2160`:`0x2161`) is live:
+
+    capacity loss = 100 x (1 - heat output / reference)      [%]
+
+Negative values mean the output is above the reference and are normal. When
+the compressor speed changes, the reference is rescaled in proportion to the
+speed term, and the capacity loss is frozen for a **300 s blanking window**
+while the heat output settles at the new speed.
+
+**Stage 5: the trigger.** A defrost is commanded once `Defrost Capacity Loss`
+has been at or above **15.0** continuously for **60 s**. Ten defrosts are on
+record and all ten end a 60-61 s dwell; none of the 19 other excursions above
+15.0 lasted beyond 29 s.
+
+**Stage 6: reset.** In the first poll of the defrost the whole model is
+zeroed: `0x2147`, `0x2148`, `0x2149`, `0x214B`, `0x214C`, `0x2156`,
+`0x2160`:`0x2161`. `Time Since Defrost` restarts when the sequence ends.
+
+Two consequences:
+
+- **The outdoor unit consumes `Heat Output`.** The controller's heat
+  calculation, written in block `0x1000`, is the input to the defrost
+  decision.
+- **The flow/return calibration shifts the trigger.** `Heat Output` is built
+  from the calibrated temperature pair, and the offset is subtracted from both
+  the reference and the current value. At a 1.8 K differential and a
+  -0.3125 K offset, a true loss of 12.4% already reads as 15%.
+
+
+### 5.8 Compressor ramp state (`0x214E`)
+
+A bitfield, published as text.
+
+| bit | value | meaning |
+|---|---|---|
+| 0 | 1 | drive on |
+| 2 | 4 | at speed |
+| 3 | 8 | ramping up |
+| 4 | 16 | ramping down |
+
+Bit 0 is set with exactly one of the other three, except in the two transient
+values below.
+
+| value | text | when |
+|---|---|---|
+| `0` | Off | compressor stopped |
+| `1` | Starting | one or two polls after the drive is enabled |
+| `5` | At speed | the speed moves by at most 0.1 rps per poll |
+| `9` | Ramping up | the speed rose by 1.2 rps or more in the last poll: every start, each stage of a defrost, each recovery |
+| `17` | Ramping down | the speed fell by as much with the drive still on: defrost entry, the end of a melt, leaving hot water |
+| `16` | Ramping down to stop | the ramp-down of a stop |
+
+The classification from measured speed reproduces the register in all but 35
+of 206,617 polls. A ramp is the 2.0 rps/s regime of
+[6.7](#67-compressor-slew-limit-0x213f) being used.
+
+
+### 5.9 Run phase (`0x2015`)
+
+| value | meaning |
+|---|---|
+| `0` | idle |
+| `1` | a heating or hot-water episode is in progress. Held across demand cycles |
+| `6` | post-episode lockout: everything stopped, standby power |
+| `1` or `2`, then `4` | exit path from `6`: one poll, then four seconds at `4`, then `0` |
+
+`Run Phase` leaves `1` only when the episode ends, not at each compressor
+stop. It goes to `6` at the end of the fan run-on and returns to `0` about
+490 s later.
+
+### 5.10 The two stability timers
+
+`Compressor Speed Stable Time` (`0x2145`) and `Fan Target Stable Time`
+(`0x2146`) are the same construction on two variables. Each counts seconds
+since its variable last moved more than **3.0%** from the value it held when
+the timer was last zeroed. The band is cumulative: a slow drift resets the
+timer once it has added up to 3%.
+
+- The compressor timer resets every 8-9 s while the speed is ramping, a
+  handful of times in a hot-water charge at a fixed 60 rps, and free-runs for
+  hours at a steady speed. The frost model reads it
+  ([5.7](#57-the-frost-model-and-the-defrost-decision)).
+- The fan timer runs whenever the fan target is set, including the pre-run and
+  the run-on, and is zero through a defrost. In hot water the fan target is
+  constant and the timer runs from fan start to fan stop. In heating it resets
+  each time the air temperature has drifted about 0.5 K. Nothing has been
+  found that reads it.
+
 
 ---
 
-## Write block `0x1000` (26 registers, `0x1000`-`0x1019`)
+## 6. Formulas and identities
 
-| register | offset | field / identity | `ebusd` match | scale | status | notes |
-|---|---|---|---|---|---|---|
-| `0x1000` | 0 | demand mode | — (tracks `RunDataStatuscode`'s state transitions) | raw | **Confirmed** | published as `demand_mode`. The controller's own command, not telemetry: `0`=idle, `1`=space heating, `2`=domestic hot water (`1` also confirmed on the Split plus). Hot water drives a fixed 80 °C `requested_flow_temp` and caps the compressor near 60 rps; space heating modulates and reaches ~96 rps. Leads `ebusd`'s `RunDataStatuscode` by 24-33 s |
-| `0x1001` | 1 | unknown | — | — | Unknown | `0` in every capture |
-| `0x1002` | 2 | compressor speed, smoothed echo of `0x2010` | `hmux0_rundatacompressorspeed` | `/10`, rps | **Confirmed (structural)** | leads `0x2010` by a couple of seconds on the ramp but lags badly on the way down; not published |
-| `0x1003` | 3 | building pump power | `hmux0_rundatabuildingcpumppower` | `/10`, % | **Confirmed** | published as `building_pump_power`; tracked within ~1% at every timestamped `ebusd` value |
-| `0x1004` | 4 | unit-active flag | — | raw | **Confirmed (structural)** | `1` whenever `run_phase` is `1` or `6`, `0` otherwise, in every capture and both demand modes. It outlasts `demand_mode` because it follows the phase, which holds through the post-stop lockout. Not published; redundant with `run_phase` |
-| `0x1005` | 5 | condensor outlet temp, echo of `0x200A` | `hmux0_rundatacondensoroutlettemp` | `/16` (D2C), °C | **Confirmed (structural)** | median diff 0.0625 °C; not published |
-| `0x1006` | 6 | separator/marker | — | — | **Confirmed (structural)** | exactly `0x8000` in every frame of every capture; meaning unexplained |
-| `0x1007` | 7 | flow temp, echo of `0x200C` | `hmux0_rundataflowtemp` | `/16` (D2C), °C | **Confirmed (structural)** | median diff 0.0625 °C; not published |
-| `0x1008` | 8 | return temp, echo of `0x200D` | `hmux0_rundatareturntemp` | `/16` (D2C), °C | **Confirmed (structural)** | median diff 0.0625 °C; not published |
-| `0x1009` | 9 | outside/ambient temperature | `hmux0_status01_temp_2`, `ctlv3_displayedoutsidetemp` | `/16` (D2C), °C | **Confirmed** | published as `outside_temp` |
-| `0x100A` | 10 | building circuit flow | `hmux0_buildingcircuitflow` (via `0x2014`) | raw, l/h | **Confirmed** | published as `building_circuit_flow_split`. On the VWZ AI an exact echo of `0x2014`: identical to the `0x2014` read just before it in every `0x1000` write checked (well over 100,000, across space heating, hot water and standby, and in the #2 dump). On the aroTHERM Split plus the only flow reading (`0x2014` is always 0 there), matching the indoor unit's display: 1213 vs 1204 l/h space heating, 1397 vs 1392-1400 l/h hot water |
-| `0x100B`-`0x1011` | 11-17 (7 registers) | unknown | — | — | Unknown | `0` in every capture |
-| `0x1012` | 18 | secondary demand-cycle flag | — | — | **Confirmed (structural)** | two-state `0`/`1`, follows the pump running; steps within 1-2 s of the demand echo `0x2001`. Not published |
-| `0x1013` | 19 | unknown | — | — | Unknown | `0` in every capture |
-| `0x1014` | 20 | unknown | — | — | Unknown | 0-10611 pooled; non-zero only while a demand is active, decaying on the stop ramp. Fitted against every confirmed register the best R2 is 0.84 and the slope changes sign between captures - no identity |
-| `0x1015`-`0x1018` | 21-24 (4 registers) | unknown/placeholder | — | — | Unknown | constant in every capture: `0xFFFF` at 21-23, `0` at 24 |
-| `0x1019` | 25 | requested flow temperature (not on the Split plus, whose block is 25 registers) | `hmux0_rundataflowtempdesired` | `/16` (D2C), °C | **Confirmed** | published as `requested_flow_temp`; steps in the same write as `demand_mode`. Three regimes. **Hot water**: a one-sample 75 °C transient, then 80 °C, then `0` at the clear. **Idle**: a live weather-dependent value recomputed in standby - on the reference installation `max(20.0, 23.47 - 0.175 x outside_temp)` °C to a residual sd of 0.02 K. **Space heating**: neither - starts high (~59.5 °C for about six minutes) and then modulates with the heating circuit. The idle relation is *not* the heating curve, which asks for much more under a real call |
+### 6.1 Heat output (`0x1014`)
 
-## Write block `0x1100` (15 registers, `0x1100`-`0x110E`)
+    heat output [W] = round(k x flow [l/h] x (flow temp - return temp) [1/16 K])
 
-| register | offset | field / identity | `ebusd` match | scale | status | notes |
-|---|---|---|---|---|---|---|
-| `0x1100` | 0 | unknown | — | — | Unknown | `0` in every capture |
-| `0x1101` | 1 | unknown | — | — | Unknown | `300` in every capture |
-| `0x1102` | 2 | unknown | — | — | Unknown | `18000` in every capture |
-| `0x1103` | 3 | unknown | — | — | Unknown | `16` in every capture |
-| `0x1104` | 4 | unknown | — | — | Unknown | `32769` (`0x8001`) in every capture |
-| `0x1105`-`0x1108` | 5-8 (4 registers) | unknown | — | — | Unknown | `0` in every capture, each individually |
-| `0x1109` | 9 | **flow/return calibration** (Vaillant D.003) | `hmux0_calibrationvlrl` | **`/16` (D2C), K**, signed | **Confirmed** | published as `flow_return_calibration`. The one register whose value *changed between captures*, in step with `ebusd`'s `CalibrationVLRL` both times; written by the machine itself. `ebusd` prints the raw value, but the machine applies it in 1/16 K: `-5` means **-0.3125 K**. See "The flow/return calibration moves on its own". `+5` in the #2 dump |
-| `0x110A` | 10 | unknown | — | — | Unknown | `0` in every capture |
-| `0x110B`-`0x110C` | 11-12 (2 registers) | unknown | — | — | Unknown | `1` in every capture, each individually |
-| `0x110D`-`0x110E` | 13-14 (2 registers) | unknown | — | — | Unknown | `0` in every capture, each individually |
+with all three inputs taken from the same `0x1000` write (`0x100A`, `0x1007`,
+`0x1008`). `k` is 0.07222 in heating and 0.07223 in hot water, which is
+`rho x cp` of water near 4.16 MJ/(m3.K). Exact to the watt in 89-99% of polls
+and within 1 W in the rest.
 
-This block is static configuration, which `0x1109` demonstrates rather than
-merely suggests: when a setting actually changed, the register carrying it
-changed with it and `ebusd` named it. The others are constant only because
-nothing reconfigured them across these captures.
+It is non-zero only while the compressor runs and appears 12-22 s after the
+compressor starts.
 
-## Write block `0x1200` (25 registers, `0x1200`-`0x1218`)
+**It reads low at small differentials.** It uses the calibrated temperature
+pair, so it inherits the `0x1109` offset. At a 1.7-1.8 K heating differential
+and a -0.3125 K offset it reads 18-19% below the true output. `Delta T`
+(`0x2209`) is uncalibrated and is the better basis for a heat figure.
 
-| register | offset | field / identity | `ebusd` match | scale | status | notes |
-|---|---|---|---|---|---|---|
-| `0x1200`-`0x1201` | 0-1 (2 registers) | framing | — | — | Unknown | `0xFFFF` in every capture, each individually - not printable ASCII |
-| `0x1202` | 2 | unknown | — | — | Unknown | `0x000A` in every capture |
-| `0x1203`-`0x1214` | 3-20 (18 registers) | **serial number** | — (a device identity string, not telemetry) | ASCII, two characters per register, big-endian | **Confirmed** | the unit's 28-character Vaillant serial number, from the low byte of `0x1203` through `0x1214`, `<`-padded to 35 characters. The captures under `tests/data/` have it overwritten with `0`s |
-| `0x1215`-`0x1218` | 21-24 (4 registers) | framing | — | — | Unknown | constant in every capture, not all alike: `1`, `0`, `0`, `0xFFFF` |
+### 6.2 Defrost capacity loss (`0x2160`)
 
-## Read block `0x2000` (34 registers, `0x2000`-`0x2021`)
+    capacity loss [%] = 100 x (1 - heat output / defrost reference heat output)
 
-| register | offset | field / identity | `ebusd` match | scale | status | HA sensor |
-|---|---|---|---|---|---|---|
-| `0x2000` | 0 | read-side echo of `demand_mode` | — | — | **Confirmed (structural)** | — (matches the write-side value in 99.33% of samples; the disagreements are a second of transition lag. Unpublished as redundant) |
-| `0x2001` | 1 | demand echo, two-state `0`/`1205` | — | — | **Confirmed (structural)** | — (steps in lockstep with `demand_mode`; unpublished as redundant) |
-| `0x2002` | 2 | unknown, part of the prerun-to-active handoff cluster | — | — | Unknown | — (0-1135 pooled; steps at the handoff, then rises and falls across an active cycle. Swept against every confirmed register: best R2 0.41, and the sign of the slope is not stable. No identity) |
-| `0x2003` | 3 | unknown, part of the prerun-to-active handoff cluster | — | — | Unknown | — (0-500 pooled; steps at the handoff, then declines slowly across an active cycle. Best R2 0.47 against compressor outlet, with the slope varying 10x between captures. No identity) |
-| `0x2004`-`0x2006` | 4-6 (3 registers) | unknown | — | — | Unknown | — (`0` in every capture, each individually, under load as well as at idle) |
-| `0x2007` | 7 | compressor inlet temp | `hmux0_rundatacompressorinlettemp` | `/16` (D2C), °C | **Confirmed** | `compressor_inlet_temp` |
-| `0x2008` | 8 | compressor outlet temp | `hmux0_rundatacompressoroutlettemp` | `/16` (D2C), °C | **Confirmed** | `compressor_outlet_temp`. Peaks at 54 °C even on a hot-water charge, far too cool for true discharge gas - a pipe temperature downstream of the compressor; the machine's hottest point is not in this map |
-| `0x2009` | 9 | EEV outlet temp | `hmux0_rundataeevoutlettemp` | `/16` (D2C), °C | **Confirmed** | `eev_outlet_temp` |
-| `0x200A` | 10 | condensor outlet temp | `hmux0_rundatacondensoroutlettemp` | `/16` (D2C), °C | **Confirmed** | `condensor_outlet_temp` |
-| `0x200B` | 11 | air inlet temp | `hmux0_rundataairinlettemp` (also `hmux0_airintaketemp`, same sensor under two names) | `/16` (D2C), °C | **Confirmed** | `air_inlet_temp` |
-| `0x200C` | 12 | flow temp, after the flow/return calibration | `hmux0_rundataflowtemp` (also `hmux0_status01_temp` and `ctlv3_hc1flowtemp`) | `/16` (D2C), °C | **Confirmed** | `flow_temp` |
-| `0x200D` | 13 | return temp, after the flow/return calibration | `hmux0_rundatareturntemp` (also `hmux0_status01_temp_1`) | `/16` (D2C), °C | **Confirmed** | `return_temp` |
-| `0x200E` | 14 | low (refrigerant-side) pressure | `hmux0_kmkreisniederdruck` | `/10`, bar | **Confirmed exact** | `low_pressure` |
-| `0x200F` | 15 | high (refrigerant-side) pressure | `hmux0_rundatahighpressure` | `/10`, bar | **Confirmed** | `high_pressure` |
-| `0x2010` | 16 | compressor speed | `hmux0_rundatacompressorspeed` | `/10`, rps | **Confirmed exact** | `compressor_speed` |
-| `0x2011` | 17 | fan1 speed | `hmux0_rundatafan1speed` | raw, rpm | **Confirmed** | `fan1_speed`; also readable (unpublished) at `0x2019` |
-| `0x2012` | 18 | unknown | — | — | Unknown | — (`0` in every capture) |
-| `0x2013` | 19 | water (hydraulic-circuit) pressure | `hmux0_flowpressure` / `ctlv3_waterpressure` (same physical sensor relayed by two eBUS devices) | `/10`, bar | **Confirmed exact** | `water_pressure` |
-| `0x2014` | 20 | building circuit flow | `hmux0_buildingcircuitflow` | raw, l/h | **Confirmed** | `building_circuit_flow`; within 1% of an independent certified heat meter in both demand modes |
-| `0x2015` | 21 | run phase | — (tracks `RunDataStatuscode`'s state machine) | raw | **Confirmed** | `run_phase`; `0`=idle, `1`=active (the whole heating episode, not one compressor run), `6`=post-stop lockout, plus a fixed `2`/`1` -> `4` -> `0` exit sequence. See "`run_phase` tracks the heating episode" |
-| `0x2016`-`0x2017` | 22-23 (2 registers) | unknown | — | — | Unknown | — (`0` in every capture, each individually) |
-| `0x2018` | 24 | electric power consumption, echo of `0x211B` (weaker fit) | `hmux0_rundataelectricpowerconsumption` | raw, W | **Confirmed (structural)** | — (median diff 37.42 W against `ebusd`, looser than `0x211B`'s 7.45 W; not published) |
-| `0x2019` | 25 | fan1 speed, echo of `0x2011` | `hmux0_rundatafan1speed` | raw, rpm | **Confirmed (structural)** | — (identical sequence; not published) |
-| `0x201A` | 26 | unknown | — | — | Unknown | — (`0` in every capture) |
-| `0x201B` | 27 | unknown | — | — | Unknown | — (0-12650 pooled, every value a multiple of **50**, so `/100` gives 0.5 steps over 111.5-126.5 while running. Part of the `0x201B`-`0x2021` record. `0x201B/0x2020` is 9.2-10.4, close to 10 but not fixed. No identity) |
-| `0x201C` | 28 | load step, 1% resolution | — | `/100`, % | **Lead** | `load_step`. A multiple of 100 in every sample, peaking at exactly 101. What it is a percentage *of* is unresolved - see "`0x201B`-`0x2021` is one record" |
-| `0x201D` | 29 | electric power consumption, echo of `0x211B` | `hmux0_rundataelectricpowerconsumption` | raw, W | **Confirmed (structural)** | — (identical sequence to `0x2018`; not published) |
-| `0x201E` | 30 | unknown, scales with compressor speed | — | — | Unknown | — (0-11400 pooled, every value a multiple of **50**. The ratio to raw `0x2010` is a clean **12.00** in both hot-water cycles but **11.42** and **11.67** in space heating, so an earlier single-capture `11.4731 x compr_rps` fit was measuring one operating point) |
-| `0x201F` | 31 | unknown | — | — | Unknown | — (0-9800 pooled, every value a multiple of **100**, the same encoding as `load_step`. Against electric power R2 is 0.94-0.98 every capture but the slope runs 1.29 to 4.09 - correlated with load without being a copy of it) |
-| `0x2020` | 32 | a second flow *reading* | — | raw, l/h | **Lead** | `flow_rate_secondary`. `0` whenever the pump is stopped; otherwise `0x2014` times a factor that switches with the diverter (~1.038 space heating, ~0.97 hot water). Not the flow a certified meter sees, and not a second circuit - see "`0x201B`-`0x2021` is one record". Not in the Split plus `0x2000` block |
-| `0x2021` | 33 | `0x201C` plus a fixed 1600 | — | `/100`, % | **Confirmed (structural)** | — (`0x2021 - 0x201C` is exactly **+1600** in 99.5-100% of samples in every capture; the idle value 1600 is simply `load_step` 0. Unpublished as redundant) |
-| `0x2022` | 34 | unknown, only on the 35-register variant (aroTHERM plus 7 kW + VWZ AI, #2) | — | — | Unknown | — (`0xFFFF` throughout the one idle dump available) |
+with the heat output taken from two writes earlier. Within 0.05 in every one
+of 20,315 polls in which the value changed.
 
-## Read block `0x2100` (98 registers, `0x2100`-`0x2161`)
+### 6.3 Mains current (`0x201C`)
 
-| register | offset | field / identity | `ebusd` match | scale | status | HA sensor |
-|---|---|---|---|---|---|---|
-| `0x2100`-`0x2118` | 0-24 (25 registers) | placeholder | — | — | **Confirmed (structural)** | — (`0xFFFF` in every capture; meaning unexplained) |
-| `0x2119` | 25 | unknown | — | — | Unknown | — (`0` in every capture) |
-| `0x211A` | 26 | unknown | — | — | Unknown | — (`1` in every capture) |
-| `0x211B` | 27 | electric power consumption | `hmux0_rundataelectricpowerconsumption` | raw, W | **Confirmed** | `electric_power_consumption`. Reads ~4.7% low against an independent electricity meter at normal load, ~7% when heavily throttled - a near-constant ratio, not an offset |
-| `0x211C` | 28 | 180-second countdown | — | raw, s | **Lead** | — (zero 98-99% of the time. When it runs it counts **down** from 179 to 1 over exactly 178-179 s, never rising. The episodes are not aligned to compressor edges, so what starts it is unresolved) |
-| `0x211D`-`0x211F` | 29-31 (3 registers) | unknown | — | — | Unknown | — (`1` in every capture, all three) |
-| `0x2120` | 32 | EEV position (absolute) | `hmux0_rundataeevpositionabs` | raw, deg | **Confirmed exact** | `eev_position` |
-| `0x2121` | 33 | post-stop lockout flag | — | — | **Confirmed (structural)** | — (two-state; steps at the prerun-to-active handoff, and holds off its idle value for 481-504 s after the demand clears, matching `run_phase` 6. Not published) |
-| `0x2122` | 34 | compressor speed target (not an echo) | `hmux0_rundatacompressorspeed` | `/10`, rps | **Confirmed** | `compressor_speed_target`; snaps to the newly commanded value the instant a demand starts or stops - `compressor_speed` (`0x2010`) follows 6 s later on a start and coasts down over ~20 s on a stop |
-| `0x2123` | 35 | fan speed target | — | raw, rpm | **Lead** | `fan_speed_target`. Against measured `fan1_speed` the slope is 0.943-0.979 across four captures at R2 0.967-0.999 - stable, and sitting just above the measured speed as a target should |
-| `0x2124` | 36 | unknown | — | — | Unknown | `0` in every capture |
-| `0x2125` | 37 | unknown | — | — | Unknown | `1` in every capture |
-| `0x2126` | 38 | **condensing temperature** | — (no `ebusd` field carries it) | `/16` (D2C), °C | **Confirmed** | `condensing_temp`. Proved by identity: `condensing - condensor_outlet` equals the confirmed subcooling to 0.000 K |
-| `0x2127` | 39 | unknown | — | — | Unknown | `0` in every capture |
-| `0x2128` | 40 | **evaporating temperature** | — (no `ebusd` field carries it) | `/16` (D2C), °C, signed | **Confirmed** | `evaporating_temp`. Proved by identity: `compressor_inlet - evaporating` equals the confirmed superheat |
-| `0x2129` | 41 | subcooling, looser copy of `0x212A` | `hmux0_istwertunterkuehlung` | `/16` (D2C), K | **Lead** | — (median diff 0.0025 °C but p90 0.37 °C, against `0x212A`'s exact fit; not published) |
-| `0x212A` | 42 | subcooling (actual) | `hmux0_istwertunterkuehlung` | `/16` (D2C), K | **Confirmed exact** | `subcooling`. The **controlled** variable of the expansion-valve loop |
-| `0x212B` | 43 | unknown | — | — | Unknown | `0` in every capture - consistent with (but weak evidence for) the always-zero superheat setpoint |
-| `0x212C` | 44 | superheat (actual) | `hmux0_istwertueberthitzung` | `/16` (D2C), K | **Confirmed** | `superheat`. An outcome, not a controlled variable - its setpoint is `0.0` |
-| `0x212D` | 45 | EEV position status | `hmux0_statuseevposition` | `/10`, % | **Confirmed** | `eev_position_status`; a distinct quantity from the absolute-degree `0x2120` |
-| `0x212E` | 46 | post-stop lockout flag | — | — | **Confirmed (structural)** | — (steps at the handoff; clears 481-503 s after the demand clear, within a second of `0x2121` and `0x215C`; not published) |
-| `0x212F`-`0x2136` | 47-54 (8 registers) | unknown | — | — | Unknown | `0` in every capture, each individually |
-| `0x2137` | 55 | de-rated temperature ceiling | — | `/16` (D2C), °C | **Lead** | `derated_temp_ceiling`. Exactly 80.00 °C unless the evaporator is below about -2.2 °C, then `80.00 + 0.069 x T_evap`. See "`0x2137` is a frost de-rate" |
-| `0x2138` | 56 | unknown | — | — | Unknown | `1200` in every capture |
-| `0x2139` | 57 | unknown | — | — | Unknown | `200` in every capture |
-| `0x213A`-`0x213E` | 58-62 (5 registers) | unknown | — | — | Unknown | `0` in every capture, each individually |
-| `0x213F`:`0x2140` | 63-64 | a two-state float parameter | — | big-endian IEEE-754 single spanning the pair | **Confirmed (structural)** | — (not two scalars: exactly `0x4000 0x0000` and `0x3E4C 0xCCCD`, the float32 encodings of **2.0** and **0.2**. 2.0 whenever the machine is idle, 0.2 while a demand runs, in both modes and every capture. A control period or a deadband would both fit) |
-| `0x2141` | 65 | EEV position, echo of `0x2120` | `hmux0_rundataeevpositionabs` | raw, deg | **Confirmed (structural)** | — (equal to `0x2120` in 99.2-100% of samples in four captures; the differences are a single count of sampling lag, with rare transients during fast valve moves. Not published) |
-| `0x2142` | 66 | unknown | — | — | Unknown | `55` in every capture |
-| `0x2143` | 67 | unknown | — | — | Unknown | `525` in every capture |
-| `0x2144` | 68 | **demand state machine** | — | raw | **Confirmed** | `demand_state`. A clean four-state sequence, identical in every capture and both demand modes: `0` idle -> **`1`** the instant the demand asserts -> `3` running -> **`4`** the instant it clears -> `0`. Both edges land within 1 s. The most precise demand-edge marker on the bus |
-| `0x2145` | 69 | a stability timer, repeatedly reset | — | raw, s | **Lead** | — (`0` at every compressor start, then resets 27-49 times in the opening minutes before free-running to thousands; the resets cluster on speed-control changes. See "Two run timers") |
-| `0x2146` | 70 | **compressor run time** | — (no `ebusd` field carries it) | raw, s | **Confirmed** | `compressor_run_time`. Zero whenever stopped; while running, slope 0.9997 against the wall clock at R2 1.0000, median residual 0.2-0.4 s over runs as long as 5 h |
-| `0x2147`-`0x2148` | 71-72 (2 registers) | unknown | — | — | Unknown | `0` in every capture, each individually |
-| `0x2149` | 73 | post-start episode value, paired with `0x2156` | — | — | **Lead** | — (see `0x2156`) |
-| `0x214A`-`0x214D` | 74-77 (4 registers) | unknown | — | — | Unknown | `0` in every capture, each individually |
-| `0x214E` | 78 | start/stop state machine | — | raw | **Confirmed (structural)** | — (`0` idle -> `9` transient 36-72 s after a demand asserts -> `5` running -> `16` or `0` at the clear. Same shape in every capture and both demand modes, but on a slower clock than `0x2144`. Not published) |
-| `0x214F` | 79 | unknown | — | — | Unknown | — (145-697 pooled. Exactly zero whenever the compressor is stopped and never zero while it runs, so not a sensor. Rises *with* compressor outlet temperature without being it. See "Remaining leads") |
-| `0x2150`-`0x2152` | 80-82 (3 registers) | unknown | — | — | Unknown | `0` in every capture, each individually |
-| `0x2153` | 83 | unknown | — | — | Unknown | — (163-459 pooled, same exact-zero-when-stopped behaviour; the weakest-explained register left. Does not track `0x214F`. See "Remaining leads") |
-| `0x2154` | 84 | unknown | — | — | Unknown | `0` in every capture |
-| `0x2155` | 85 | evaporating temperature on an offset scale | — | `/10` °C with a fixed offset | **Lead** | — (`0x2155/10 - evaporating_temp` is **+17.64 to +17.83 K** with a 5-95% spread of only ±0.1 K - the combined quantisation of the two registers - at R2 0.9993-0.9999 in every capture, standby included, over -7 to +29 °C. An encoding, not physics. Not published; redundant with `evaporating_temp`) |
-| `0x2156` | 86 | post-start episode value, paired with `0x2149` | — | — | **Lead** | — (`0x2149` and `0x2156` are never non-zero apart. Episodes begin 30-112 s after a compressor start and last 263-439 s; `0x2149` peaks at exactly 176 every time, `0x2156` at 400-422. They fire in both demand modes but only in the colder captures (air inlet 9.5-13.2 °C), never at 14.4-29.4 °C - which points at a low-ambient start routine with a threshold near 14 °C) |
-| `0x2157` | 87 | demand-active flag carrying -480 | — | `/16` gives -30.0 °C | **Confirmed (structural)** | — (exactly `0` at idle and `0xFE20` = -480 whenever a demand is active, in both modes and every capture. Asserts the same second the demand does and clears 66-87 s after it, well before the lockout ends. As `/16` a round -30.0 °C, which would suit a limit enabled only while running. Not published) |
-| `0x2158` | 88 | unknown | — | — | Unknown | `0` in every capture |
-| `0x2159` | 89 | unknown | — | — | Unknown | `1728` in every capture |
-| `0x215A` | 90 | unknown | — | — | Unknown | `360` in every capture |
-| `0x215B` | 91 | unknown | — | — | Unknown | `0` in every capture |
-| `0x215C` | 92 | post-stop lockout flag | — | — | **Confirmed (structural)** | — (`0`/`150`; clears 483-504 s after the demand clear, within a second or two of `0x2121` and `0x212E`, and holds through the whole of `run_phase` 6. Not published) |
-| `0x215D`-`0x2161` | 93-97 (5 registers) | unknown | — | — | Unknown | `0` in every capture, each individually |
+    mains current [mA] = ceil(1000 x power / voltage / 100) x 100
 
-## Read block `0x2200` (73 registers, `0x2200`-`0x2248`)
+with power `0x2018` and voltage `0x201B` from the same read. Exact in 74-75%
+of polls and within one 0.1 A step in over 99.99%. The mains voltage agrees
+with a separate mains voltage sensor to a median of 0.2 V over 31 hours.
 
-This block is device identity and stored configuration: 69 of its 73
-registers are constant in every capture. Three of the constants are not
-scalars but IEEE-754 floats spanning a register pair, in the same
-big-endian word order as `delta_t` at `0x2209`.
+### 6.4 Refrigerant cycle identities
 
-| register | offset | field / identity | `ebusd` match | scale | status | notes |
-|---|---|---|---|---|---|---|
-| `0x2200`-`0x2202` | 0-2 (3 registers) | unknown | — | — | Unknown | `1` in every capture, each individually |
-| `0x2203` | 3 | unknown, plausibly a firmware version field | — | — | Unknown | `405` in every capture |
-| `0x2204` | 4 | unknown, plausibly a firmware version field | — | — | Unknown | `4` in every capture |
-| `0x2205` | 5 | unknown, plausibly a firmware version field | — | — | Unknown | `7` in every capture - `0x2203`-`0x2205` read like a `405.4.7`-style version number, but nothing in the captures varies to test that |
-| `0x2206`-`0x2207` | 6-7 (2 registers) | unknown | — | — | Unknown | `0xFFFF` in every capture, each individually |
-| `0x2208` | 8 | unknown | — | — | Unknown | `600` in every capture |
-| `0x2209` | 9 | **flow minus return, before the flow/return calibration** | — | big-endian IEEE-754 single spanning `0x2209`:`0x220A`, K | **Confirmed** | published as `delta_t`. The only float pair among the *moving* registers. `delta_t - (flow_temp - return_temp) = -flow_return_calibration`; matches a certified heat meter to a median -0.012 K where the calibrated pair is -0.262 K low. See "32-bit floats on this bus" |
-| `0x220A` | 10 | low word of the float at `0x2209` | — | part of `0x2209` | **Confirmed (structural)** | not a scalar; meaningless alone |
-| `0x220B` | 11 | unknown | — | — | Unknown | `1` in every capture |
-| `0x220C`-`0x2217` | 12-23 (12 registers) | unknown | — | — | Unknown | `0` in every capture, each individually |
-| `0x2218` | 24 | unknown | — | — | Unknown | `13` in every capture |
-| `0x2219` | 25 | unknown | — | — | Unknown | `16` in every capture |
-| `0x221A` | 26 | unknown | — | — | Unknown | `300` in every capture |
-| `0x221B` | 27 | unknown | — | — | Unknown | `600` in every capture |
-| `0x221C` | 28 | unknown | — | — | Unknown | `0` in every capture |
-| `0x221D`:`0x221E` | 29-30 | **post-stop lockout, in seconds** | — | big-endian IEEE-754 single spanning the pair, s | **Confirmed** | published as `lockout_duration`. `0x43F0 0x0000` = **480.0** in every capture (and in the #2 dump). Timed from the moment compressor speed reaches 0, the measured lockout is 480, 481, 481, 481, 481 and 482 s over six clears - a stored float matching a measured timer to within the 1.2 s sampling |
-| `0x221F` | 31 | unknown | — | — | Unknown | `17766` (`0x4566`) in every capture. Shaped like a float high word, but `0x2220` is `1`, not `0`, so the pair does not decode to a round value and this is left as a scalar |
-| `0x2220` | 32 | unknown | — | — | Unknown | `1` in every capture |
-| `0x2221` | 33 | unknown | — | — | Unknown | `0` in every capture |
-| `0x2222` | 34 | unknown | — | — | Unknown | `1` in every capture |
-| `0x2223`:`0x2224` | 35-36 | stored float constant `120.0` | — | big-endian IEEE-754 single spanning the pair | **Confirmed (structural)** | `0x42F0 0x0000` = **120.0** in every capture. A parameter; what it configures is unknown |
-| `0x2225` | 37 | unknown | — | — | Unknown | `50` in every capture - its low byte is the first character of the serial readback that follows, as `0x1203`'s is in `0x1200` |
-| `0x2226`-`0x2236` | 38-54 (17 registers) | readback of the serial number | — | ASCII, as `0x1204`-`0x1214` | **Confirmed** | byte-for-byte identical to `0x1204`-`0x1214` in every capture. Overwritten with `0`s in `tests/data/` |
-| `0x2237`-`0x2246` | 55-70 (16 registers) | a second identity string | — | ASCII, two characters per register | **Confirmed (structural)** | a 30-character ASCII string with `XX` padding, constant in every capture and **not** present anywhere in write block `0x1200` - most likely the other unit's serial or article number. Overwritten with `0`s in `tests/data/` |
-| `0x2247` | 71 | unknown | — | — | Unknown | `1` in every capture |
-| `0x2248` | 72 | unknown | — | — | Unknown | `0` in every capture |
+    subcooling = condensing temp - condenser outlet temp
+    superheat  = compressor inlet temp - evaporating temp
+
+Both exact. They are what identify `0x2126` and `0x2128`.
+
+### 6.5 De-rated temperature ceiling (`0x2137`)
+
+80.00 °C whenever the evaporating temperature is above -5.00 °C. Below that
+it follows two straight segments in the raw evaporating temperature `e`
+(`0x2128`), taking the lower:
+
+    ceiling_raw = round(1290 + e x 2/15)           from -5 down to -20 degC
+    ceiling_raw = round(1916.65 + 2.0947 x e)      below -20 degC
+
+That is a fall of 0.13 K per K down to -20 °C evaporating (78.0 °C there) and
+2.1 K per K below it (70.0 °C at -23.75 °C). All 4,087 de-rated polls in four
+captures fit within 2 counts.
+
+The shape is that of a compressor envelope's upper edge, which favours the
+condensing temperature as the thing it limits. That is a Lead: nothing has
+come within 9.9 K of the ceiling. The compressor outlet temperature is ruled
+out, having run above it without any reaction.
+
+
+### 6.6 Compressor speed window (`0x2002`, `0x2003`)
+
+The two bounds form one object: both zero or both non-zero, lower never above
+upper, and the measured speed lies inside them in 99.5% of polls. The window
+is closed (both zero) when idle, in the pre-run and through a defrost.
+
+**Lower bound, `Compressor Speed Min`.** A function of air inlet temperature,
+the same in both demand modes:
+
+| air inlet | lower bound |
+|---|---|
+| at or below 4.94 °C | 30.0 rps |
+| 5.0 to 5.3 °C | a 0.375 K transition |
+| 5.38 to 13.3 °C | 20.0 rps |
+| above 16.8 °C | rises with air temperature, 25 to 32 rps |
+
+The controller tracks to this bound, and while pinned on it the flow
+temperature is above its setpoint 96% of the time. This is the modulation
+floor behind short cycling in mild weather.
+
+**Upper bound, `Compressor Speed Max`.** In heating, 120.0 rps below about
+7.7 °C air inlet, falling about 4.5 rps per K above that (97-98 rps at 12 °C).
+Hot water follows a flatter, higher line. It moves at most 0.4 rps per poll.
+On some nights it slides down to exactly 60.0 rps for hours; what selects
+that is an open question.
+
+**Fixed windows.** [50, 60] rps for 180 s after every start, and [30, 50] rps
+for about 110 s around every change between heating and hot water.
+
+### 6.7 Compressor slew limit (`0x213F`)
+
+The maximum rate at which `Compressor Speed Target` moves.
+
+| value | when | observed maximum |
+|---|---|---|
+| 2.0 rps/s | idle, the first 180 s after a start, the 110 s of a mode change, a whole defrost | 2.07 rps/s |
+| 0.2 rps/s | free modulation | 0.26 rps/s |
+
+
+### 6.8 Requested flow temperature (`0x1019`)
+
+| situation | value |
+|---|---|
+| hot water | a fixed hot-water flow setpoint: 80 °C (after one poll at 75 °C) or 53 °C have been seen, depending on the controller's settings |
+| space heating | the heating circuit's weather-compensated setpoint, modulated by the controller (25-29 °C in these captures) |
+| idle | `max(20.0, 23.47 - 0.175 x outside temp)` °C, recomputed continuously. Not the heating curve |
+
+### 6.9 Circuit flow request (`0x2001`)
+
+1205 l/h whenever a demand is active, `0` otherwise.
+
+- When the pump has headroom, the measured flow sits on it: median 1205 l/h,
+  5th to 95th percentile 1199-1211.
+- When the pump is at 100% the flow can fall short: 1118-1172 l/h on the
+  reference installation, whose heating circuit is too restrictive for the
+  pump to reach the request.
+- The flow is essentially never above it (62 of 173,550 settled polls).
+- After hot water hands over to heating the request is eased to 1098 l/h over
+  34 s ([5.5](#55-changing-between-heating-and-hot-water)).
+- At `0` the pump is not regulated to a flow: it runs at a fixed command.
+
+
+### 6.10 The second flow figure (`0x2020`)
+
+Not the circuit flow: the certified heat meter follows `0x2014` within 2% in
+every mode and departs from this register by -4.9% to +1.6%. The ratio of
+`0x2020` to `0x2014` follows the pump's operating point:
+
+| situation | pump command | ratio |
+|---|---|---|
+| pump only, compressor off | 72% | 0.990 |
+| pump only, compressor off | 100% | 1.032 |
+| heating | 100% | 1.031-1.038 |
+| hot water | 65-67% | 0.964-0.982 |
+
+It is zero exactly when the pump is stopped, leads the flow sensor by 1-3
+polls and has twice its jitter. That fits a flow estimated from the pump
+rather than sensed. It is not a clean function of the pump command alone, so
+this is a Lead.
+
+### 6.11 Fan-linked value (`0x2157`)
+
+`-480` while `Fan Speed Target` is non-zero, `-288` on the poll after
+`Defrost Active` sets and until it clears, `0` otherwise. Wrong in 43 of
+321,992 polls, all at edges.
 
 ---
 
-Three more published sensors are not in these tables at all: `Thermal
-Power Delivery`, `Heat Pump COP` and `Carnot Efficiency` are computed in
-ESPHome from the register-backed sensors above (`building_circuit_flow`,
-`delta_t` - or `flow_temp`/`return_temp` until it has been seen -,
-`electric_power_consumption`, `compressor_speed` and `air_inlet_temp`), not
-decoded from any register of their own.
+## 7. How this machine behaves
+
+**The expansion valve regulates subcooling, not superheat.** The subcooling
+setpoint moves several times in a cycle and the measurement follows it; the
+superheat setpoint is a fixed 0 and the measured superheat sits just above
+zero. A superheat near 0 K is normal on this unit and is not a fault signal.
+Neither setpoint is on this bus.
+
+**Electric power reads low.** `Electric Power Consumption` is about 4.7% below
+a separate electricity meter at normal load and about 7% below when throttled
+hard. It reads 6-8 W in standby and does not include the roughly 30 W base
+trace heater.
+
+**Hot water and heating run differently.** Hot water holds the compressor
+near 60 rps with a constant fan target of 649-650 rpm and a regulated
+1205 l/h. Heating modulates between the window bounds, up to 96 rps observed,
+with the pump at 100%.
+
+**The drive sleeps.** From 480 s after a stop until the next start hand-off,
+the drive-side registers (`0x201B`-`0x201F`, `0x214F`, `0x2153`) read zero.
+
+**No register is a packed status word** in the way `ebusd`'s `Status07` is.
+`0x214E` is the one bitfield. Every other flag is a whole register.
+
+**Idle correlations mislead.** With the compressor off every temperature
+decays to ambient, so every temperature register correlates with every other.
+Comparisons are only meaningful over running samples.
+
+---
+
+## 8. Open questions
+
+**Quantity unknown**
+
+| register | what would settle it |
+|---|---|
+| `0x2020` | a pump sweep at a fixed valve position (installer test D.027) |
+| `0x2149`, `0x2156` | finding what reads the two curves; the defrost decision does not |
+| `0x2157` | what -480 and -288 are |
+
+**Leads awaiting confirmation**
+
+| register | what would settle it |
+|---|---|
+| `0x201E`, `0x201F` | a clamp meter on a compressor lead |
+| `0x214F`, `0x2153` | the installer sensor test, or a run with the fan blocked |
+| `0x214B` | whether the number is a speed or a suction volume flow |
+| `0x2158` | a second sighting |
+
+**Identified, with one thing open**
+
+| register | open point |
+|---|---|
+| `0x2137` | which temperature it caps. Needs an 80 °C hot-water charge with the evaporator below -5 °C |
+| `0x2002` | what pulls it down to exactly 60 rps on some nights |
+| `0x211C` | what the 180 s guards. Needs a heat request repeated within three minutes of a stop |
+| `0x2146` | what reads the fan stability timer |
+| `0x214C`, `0x2148` | whether the attempt counter can assert in the 18.2 h rollover state |
+| the 60 s dwell | whether a dip below 15.0 inside the minute restarts it. Needs more defrosts |
+
+**Not on the bus, or not found**
+
+- The base trace heater (about 30 W, on at or below roughly 2.9 °C). Finding
+  it needs a capture with a cold idle; none exists.
+- The subcooling and superheat setpoints, the true discharge gas temperature,
+  and the cylinder temperature.
+
+**About 190 registers have never moved.** Passive capture cannot identify
+them beyond the constants labelled above by value.
+
+---
+
+## 9. Where these findings come from
+
+Passive captures of the bus on one **VWZ AI + aroTHERM 75/8.1** installation,
+taken through autumn 2026 and deliberately different in character: two
+hot-water charges, a 17-hour pure standby, short and day-long space heating,
+a first cold capture with four defrosts and two hot-water charges inside
+heating, and two more nights of heating at 4-12 °C. The last capture arrived
+after the rules above were written and served as an out-of-sample test:
+every rule held except the single-segment form of the `0x2137` curve, which
+became the two segments in [6.5](#65-de-rated-temperature-ceiling-0x2137).
+Logged sensor data supplied six further defrosts.
+
+All captures reassemble to 100% CRC-valid messages in the same six block
+shapes. Where a register was checked against something outside the bus, the
+references were `ebusd` polling the same heat pump over eBUS, an
+MID-certified heat meter on the same water circuit, a separate electricity
+meter on the outdoor unit's supply, a separate mains voltage sensor, and the
+unit's own type plate and display.
+
+The other units in [section 1](#1-the-bus) were reported by their owners; on
+those, only the registers named there have been checked.
+
+Two published sensors in the example configuration are computed in ESPHome
+rather than read from a register: `Heat Pump COP` (`Heat Output` over
+`Electric Power Consumption`) and `Carnot Efficiency`.

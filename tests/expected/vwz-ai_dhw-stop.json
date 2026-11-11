@@ -15,6 +15,90 @@
   "write-request 0x1200+25": 8
  },
  "sensors": {
+  "demand_mode": {
+   "published": 8,
+   "first": 2.0,
+   "last": 0.0,
+   "min": 0.0,
+   "max": 2.0
+  },
+  "building_pump_power": {
+   "published": 8,
+   "first": 63.6,
+   "last": 63.7,
+   "min": 63.5,
+   "max": 63.7
+  },
+  "outside_temp": {
+   "published": 8,
+   "first": 18.6875,
+   "last": 18.6875,
+   "min": 18.6875,
+   "max": 18.6875
+  },
+  "building_circuit_flow_split": {
+   "published": 8,
+   "first": 1209.0,
+   "last": 1205.0,
+   "min": 1200.0,
+   "max": 1209.0
+  },
+  "hot_water_mode_active": {
+   "published": 8,
+   "first": 1.0,
+   "last": 1.0,
+   "min": 1.0,
+   "max": 1.0
+  },
+  "heat_output": {
+   "published": 8,
+   "first": 6288.0,
+   "last": 6180.0,
+   "min": 6154.0,
+   "max": 6288.0
+  },
+  "requested_flow_temp": {
+   "published": 8,
+   "first": 80.0,
+   "last": 0.0,
+   "min": 0.0,
+   "max": 80.0
+  },
+  "flow_return_calibration": {
+   "published": 8,
+   "first": 0.0,
+   "last": 0.0,
+   "min": 0.0,
+   "max": 0.0
+  },
+  "building_circuit_flow_target": {
+   "published": 8,
+   "first": 1205.0,
+   "last": 1205.0,
+   "min": 1205.0,
+   "max": 1205.0
+  },
+  "compressor_speed_max": {
+   "published": 8,
+   "first": 78.8,
+   "last": 78.7,
+   "min": 78.7,
+   "max": 78.8
+  },
+  "compressor_speed_min": {
+   "published": 8,
+   "first": 27.2,
+   "last": 27.2,
+   "min": 27.2,
+   "max": 27.2
+  },
+  "defrost_sequence": {
+   "published": 8,
+   "first": 0.0,
+   "last": 0.0,
+   "min": 0.0,
+   "max": 0.0
+  },
   "compressor_inlet_temp": {
    "published": 8,
    "first": 10.25,
@@ -113,19 +197,19 @@
    "min": 1.0,
    "max": 1.0
   },
-  "load_step": {
+  "mains_voltage": {
    "published": 8,
-   "first": 101.0,
-   "last": 89.0,
-   "min": 89.0,
-   "max": 101.0
+   "first": 234.0,
+   "last": 233.0,
+   "min": 233.0,
+   "max": 234.0
   },
-  "flow_rate_secondary": {
+  "active_current": {
    "published": 8,
-   "first": 1162.0,
-   "last": 1177.0,
-   "min": 1162.0,
-   "max": 1179.0
+   "first": 10.1,
+   "last": 8.9,
+   "min": 8.9,
+   "max": 10.1
   },
   "electric_power_consumption": {
    "published": 8,
@@ -190,12 +274,26 @@
    "min": 22.0,
    "max": 44.4
   },
+  "defrost_active": {
+   "published": 8,
+   "first": 0.0,
+   "last": 0.0,
+   "min": 0.0,
+   "max": 0.0
+  },
   "derated_temp_ceiling": {
    "published": 8,
    "first": 80.0,
    "last": 80.0,
    "min": 80.0,
    "max": 80.0
+  },
+  "compressor_slew_limit": {
+   "published": 8,
+   "first": 0.2,
+   "last": 2.0,
+   "min": 0.2,
+   "max": 2.0
   },
   "demand_state": {
    "published": 8,
@@ -204,12 +302,54 @@
    "min": 3.0,
    "max": 4.0
   },
-  "compressor_run_time": {
+  "compressor_speed_stable_time": {
+   "published": 8,
+   "first": 5364.0,
+   "last": 0.0,
+   "min": 0.0,
+   "max": 5370.0
+  },
+  "fan_target_stable_time": {
    "published": 8,
    "first": 5442.0,
    "last": 1.0,
    "min": 0.0,
    "max": 5445.0
+  },
+  "defrost_reference_heat_output": {
+   "published": 8,
+   "first": 0.0,
+   "last": 0.0,
+   "min": 0.0,
+   "max": 0.0
+  },
+  "defrost_reference_attempt": {
+   "published": 8,
+   "first": 0.0,
+   "last": 0.0,
+   "min": 0.0,
+   "max": 0.0
+  },
+  "time_since_defrost": {
+   "published": 8,
+   "first": 0.0,
+   "last": 0.0,
+   "min": 0.0,
+   "max": 0.0
+  },
+  "demand_window": {
+   "published": 8,
+   "first": 150.0,
+   "last": 150.0,
+   "min": 150.0,
+   "max": 150.0
+  },
+  "defrost_capacity_loss": {
+   "published": 8,
+   "first": 0.0,
+   "last": 0.0,
+   "min": 0.0,
+   "max": 0.0
   },
   "delta_t": {
    "published": 8,
@@ -224,48 +364,6 @@
    "last": 480.0,
    "min": 480.0,
    "max": 480.0
-  },
-  "demand_mode": {
-   "published": 8,
-   "first": 2.0,
-   "last": 0.0,
-   "min": 0.0,
-   "max": 2.0
-  },
-  "building_pump_power": {
-   "published": 8,
-   "first": 63.6,
-   "last": 63.7,
-   "min": 63.5,
-   "max": 63.7
-  },
-  "outside_temp": {
-   "published": 8,
-   "first": 18.6875,
-   "last": 18.6875,
-   "min": 18.6875,
-   "max": 18.6875
-  },
-  "requested_flow_temp": {
-   "published": 8,
-   "first": 80.0,
-   "last": 0.0,
-   "min": 0.0,
-   "max": 80.0
-  },
-  "building_circuit_flow_split": {
-   "published": 8,
-   "first": 1209.0,
-   "last": 1205.0,
-   "min": 1200.0,
-   "max": 1209.0
-  },
-  "flow_return_calibration": {
-   "published": 8,
-   "first": 0.0,
-   "last": 0.0,
-   "min": 0.0,
-   "max": 0.0
   }
  },
  "never_published": []

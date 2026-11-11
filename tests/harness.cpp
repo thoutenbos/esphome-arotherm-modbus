@@ -4,6 +4,7 @@
 // tests/run_tests.py; not meant to be used by hand, but it can be:
 //
 //   S 2007 D2C            register a sensor (index = order of S lines)
+//   T 214E COMPRESSOR_RAMP_STATE   register a text sensor (own index space)
 //   B 01 03 20 00 00 22   feed bytes; the clock advances one 19200-baud
 //                         character time (573 us) per byte
 //   I 150000              advance the clock (bus idle)
@@ -13,6 +14,7 @@
 // Output, one event per line, in the order the component produced them:
 //
 //   P <sensor index> <value>
+//   X <text sensor index> <text>
 //   L <level> <message>
 
 #include <cstdarg>
@@ -60,15 +62,37 @@ struct SensorDef {
 AroThermModbus::Scale parse_scale(const std::string &s) {
   if (s == "RAW")
     return AroThermModbus::Scale::RAW;
+  if (s == "URAW")
+    return AroThermModbus::Scale::URAW;
   if (s == "DIV10")
     return AroThermModbus::Scale::DIV10;
+  if (s == "DIV50")
+    return AroThermModbus::Scale::DIV50;
   if (s == "DIV100")
     return AroThermModbus::Scale::DIV100;
+  if (s == "DIV1000")
+    return AroThermModbus::Scale::DIV1000;
   if (s == "D2C")
     return AroThermModbus::Scale::D2C;
   if (s == "F32")
     return AroThermModbus::Scale::F32;
   fprintf(stderr, "unknown scale %s\n", s.c_str());
+  exit(2);
+}
+
+struct TextDef {
+  uint16_t reg;
+  AroThermModbus::TextKind kind;
+};
+
+AroThermModbus::TextKind parse_kind(const std::string &s) {
+  if (s == "FIRMWARE_VERSION")
+    return AroThermModbus::TextKind::FIRMWARE_VERSION;
+  if (s == "COMPRESSOR_RAMP_STATE")
+    return AroThermModbus::TextKind::COMPRESSOR_RAMP_STATE;
+  if (s == "SERIAL_NUMBER")
+    return AroThermModbus::TextKind::SERIAL_NUMBER;
+  fprintf(stderr, "unknown text kind %s\n", s.c_str());
   exit(2);
 }
 
@@ -78,6 +102,8 @@ int main() {
   esphome::time::RealTimeClock clock;
   std::vector<SensorDef> defs;
   std::vector<std::unique_ptr<esphome::sensor::Sensor>> sensors;
+  std::vector<TextDef> text_defs;
+  std::vector<std::unique_ptr<esphome::text_sensor::TextSensor>> text_sensors;
   std::unique_ptr<Harness> component;
   uint32_t now_us = 1000000;
 
@@ -90,6 +116,13 @@ int main() {
       s->on_publish = [i](float v) { printf("P %zu %.6f\n", i, v); };
       component->add_sensor(defs[i].reg, defs[i].scale, s.get());
       sensors.push_back(std::move(s));
+    }
+    text_sensors.clear();
+    for (size_t i = 0; i < text_defs.size(); i++) {
+      auto s = std::make_unique<esphome::text_sensor::TextSensor>();
+      s->on_publish = [i](const std::string &v) { printf("X %zu %s\n", i, v.c_str()); };
+      component->add_text_sensor(text_defs[i].reg, text_defs[i].kind, s.get());
+      text_sensors.push_back(std::move(s));
     }
   };
   rebuild();
@@ -104,6 +137,11 @@ int main() {
       std::string reg, scale;
       in >> reg >> scale;
       defs.push_back({(uint16_t) std::stoul(reg, nullptr, 16), parse_scale(scale)});
+      rebuild();
+    } else if (cmd == "T") {
+      std::string reg, kind;
+      in >> reg >> kind;
+      text_defs.push_back({(uint16_t) std::stoul(reg, nullptr, 16), parse_kind(kind)});
       rebuild();
     } else if (cmd == "B") {
       std::string hex;

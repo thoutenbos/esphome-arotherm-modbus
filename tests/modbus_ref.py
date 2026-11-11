@@ -114,7 +114,7 @@ def classify(adu: bytes, last_request: tuple[int, int] | None = None) -> str:
 class SensorSpec:
     key: str
     register: int
-    scale: str  # "raw" | "div10" | "div100" | "d2c" | "f32"
+    scale: str  # "raw" | "uraw" | "div10" | "div50" | "div100" | "div1000" | "d2c" | "f32"
 
 
 def load_sensors(path: str = COMPONENT_INIT) -> list[SensorSpec]:
@@ -146,10 +146,16 @@ def scale_value(scale: str, raw: int) -> float:
         return v / 16.0
     if scale == "div10":
         return v / 10.0
+    if scale == "div50":
+        return v / 50.0
     if scale == "div100":
         return v / 100.0
+    if scale == "div1000":
+        return v / 1000.0
     if scale == "raw":
         return float(v)
+    if scale == "uraw":
+        return float(raw & 0xFFFF)
     raise ValueError(scale)
 
 

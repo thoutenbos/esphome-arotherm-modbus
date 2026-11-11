@@ -25,7 +25,7 @@ like the original. The output is re-checked before it is written.
 Examples:
 
   # 3 poll cycles (12 ADUs each) from the middle of a session
-  import_capture.py ~/captures/2026-09-08_122950 --skip 300000 --align 0x1100 \\
+  import_capture.py ~/captures/<session> --skip 300000 --align 0x1100 \\
       --count 36 --out tests/data/vwz-ai_idle.hex --note "VWZ AI idle"
 
   # a raw dump attached to an issue
