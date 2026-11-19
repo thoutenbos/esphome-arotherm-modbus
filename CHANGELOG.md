@@ -5,6 +5,84 @@ configuration key, with the name used in the example
 [`arotherm-modbus.yaml`](arotherm-modbus.yaml) and the register they read;
 [`REGISTERS.md`](REGISTERS.md) has the evidence for each.
 
+## [v0.10.0] - 2026-11-19
+
+Eleven new sensors, "no sensor fitted" handling, and the outdoor unit's
+side of power-up, loss of communication and the installer settings. No
+breaking changes: every key of v0.9.1 is still there with the same meaning.
+This version has 64 sensors (61 numeric, 3 text); four of them are commented
+out in the example configuration.
+
+### Added
+
+| key | name | register | what it is |
+|---|---|---|---|
+| `compressor_speed_command` | Compressor Speed Command | `0x1002` | rps - the controller's speed command, which the outdoor unit's target follows while modulating |
+| `condensor_inlet_temp` | Condensor Inlet Temp | `0x1006` | °C - refrigerant at the gas side of the plate heat exchanger, on units with an indoor unit (aroTHERM Split plus); unknown on a monoblock |
+| `outdoor_mode` | Outdoor Mode | `0x2000` | the mode the outdoor unit is actually in, in the same codes as Demand Mode |
+| `compressor_power` | Compressor Power | `0x2018` | W - the drive's own mains power, without the fan and standby load |
+| `holdoff_countdown` | Hold-off Countdown | `0x211C` | s - the outdoor unit's minimum off-time after a compressor stop (180 s), and the 485 s after a lost controller returns |
+| `fault_code` | Fault Code | `0x2100` | the fault code on the Vaillant display (`9998` = F.9998), `65535` when there is none. Only one code has been seen so far |
+| `silent_mode_active` | Silent Mode Active | `0x110D` | `1` while the controller's noise-reduction program runs |
+
+Commented out in the example configuration, for diagnostics:
+
+| key | name | register | what it is |
+|---|---|---|---|
+| `episode_active` | Episode Active | `0x1004` | the controller's heating/hot-water episode flag, which `Run Phase` follows |
+| `lockout_flag` | Lockout Flag | `0x2121` | clear from the start hand-off until 480 s after the compressor stops |
+| `reinitialise_flag` | Re-initialise Flag | `0x1018` | set together with `Demand Mode` 6 |
+| `test_program` | Test Program | `0x2005` | the step of an installer test program |
+
+Component:
+
+- **"No sensor fitted" publishes nothing.** `0x8000` on any temperature
+  register and `0xFFFF` on `water_pressure` used to be published scaled
+  (-2048 °C, -0.1 bar); the entity now stays unknown instead. This mostly
+  affects the aroTHERM Split plus, whose water pressure register is not
+  fitted, and every unit's outside temperature in the first poll after the
+  controller boots.
+- A 32-register response with no request before it - right after boot on an
+  aroTHERM Split plus - is now placed in `0x2000` instead of being dropped.
+- Bytes that cannot be framed as a message are logged at `DEBUG` as
+  `UNFRAMED` lines instead of being dropped silently. That includes the
+  ten-byte announcement a unit sends once when it powers up.
+
+Tests: ten aroTHERM Split plus datasets from
+[#4](https://github.com/thoutenbos/esphome-arotherm-modbus/issues/4), and
+unit cases for the behaviour above.
+
+### Changed
+
+- **`demand_mode`** has two more values: `4` while an installer test
+  program runs (with the step in `test_program`), and `6` for a few seconds
+  after the controller regains an outdoor unit it had lost.
+- **`compressor_speed_target`** is documented as what it is: the
+  controller's command while modulating, the outdoor unit's own schedule at
+  a start, a stop and in a defrost.
+- **`REGISTERS.md`**:
+  - New sections on who decides what (the speed control loop lives in the
+    controller; the outdoor unit sets the envelope and owns start, stop and
+    defrost), power-up and loss of communication, and the installer settings
+    and test programs (an EEBus power limit is not on the bus; silent mode
+    is one flag; the forced-defrost test runs the normal defrost sequence).
+  - The 180 s countdown is the outdoor unit's enforced minimum off-time, and
+    the 480 s lockout is only how long the drive stays awake - not a restart
+    lock.
+  - The refrigerant identities are close but not exact: `condensing -
+    condensor outlet` matches `subcooling` within one count in 98% of running
+    polls, `compressor inlet - evaporating` matches `superheat` more loosely.
+    An aroTHERM Split plus computes its superheat from the expansion valve
+    outlet temperature instead.
+  - Cross-checked against the aroTHERM Split plus capture: `0x2139` is the
+    stored modulation floor that `Compressor Speed Min` never goes below (300
+    on the Split plus, 200 here), and `0x2142` is most likely the expansion
+    valve's lower limit.
+  - The defrost reference re-latch can take longer than 300 s when the
+    compressor speed is not yet steady.
+- **Example configuration:** the new sensors, a "Faults and settings"
+  group, and the four diagnostic sensors as comments.
+
 ## [v0.9.1] - 2026-11-11
 
 First release candidate, and the first tagged version. Changes are listed

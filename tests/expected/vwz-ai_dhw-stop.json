@@ -22,12 +22,26 @@
    "min": 0.0,
    "max": 2.0
   },
+  "compressor_speed_command": {
+   "published": 8,
+   "first": 60.0,
+   "last": 58.9,
+   "min": 58.9,
+   "max": 60.0
+  },
   "building_pump_power": {
    "published": 8,
    "first": 63.6,
    "last": 63.7,
    "min": 63.5,
    "max": 63.7
+  },
+  "episode_active": {
+   "published": 8,
+   "first": 1.0,
+   "last": 1.0,
+   "min": 1.0,
+   "max": 1.0
   },
   "outside_temp": {
    "published": 8,
@@ -57,6 +71,13 @@
    "min": 6154.0,
    "max": 6288.0
   },
+  "reinitialise_flag": {
+   "published": 8,
+   "first": 0.0,
+   "last": 0.0,
+   "min": 0.0,
+   "max": 0.0
+  },
   "requested_flow_temp": {
    "published": 8,
    "first": 80.0,
@@ -70,6 +91,20 @@
    "last": 0.0,
    "min": 0.0,
    "max": 0.0
+  },
+  "silent_mode_active": {
+   "published": 8,
+   "first": 0.0,
+   "last": 0.0,
+   "min": 0.0,
+   "max": 0.0
+  },
+  "outdoor_mode": {
+   "published": 8,
+   "first": 2.0,
+   "last": 2.0,
+   "min": 2.0,
+   "max": 2.0
   },
   "building_circuit_flow_target": {
    "published": 8,
@@ -91,6 +126,13 @@
    "last": 27.2,
    "min": 27.2,
    "max": 27.2
+  },
+  "test_program": {
+   "published": 8,
+   "first": 0.0,
+   "last": 0.0,
+   "min": 0.0,
+   "max": 0.0
   },
   "defrost_sequence": {
    "published": 8,
@@ -197,6 +239,13 @@
    "min": 1.0,
    "max": 1.0
   },
+  "compressor_power": {
+   "published": 8,
+   "first": 2331.0,
+   "last": 2027.0,
+   "min": 2027.0,
+   "max": 2336.0
+  },
   "mains_voltage": {
    "published": 8,
    "first": 234.0,
@@ -211,6 +260,13 @@
    "min": 8.9,
    "max": 10.1
   },
+  "fault_code": {
+   "published": 8,
+   "first": 65535.0,
+   "last": 65535.0,
+   "min": 65535.0,
+   "max": 65535.0
+  },
   "electric_power_consumption": {
    "published": 8,
    "first": 2371.0,
@@ -218,12 +274,26 @@
    "min": 1986.0,
    "max": 2376.0
   },
+  "holdoff_countdown": {
+   "published": 8,
+   "first": 0.0,
+   "last": 0.0,
+   "min": 0.0,
+   "max": 0.0
+  },
   "eev_position": {
    "published": 8,
    "first": 139.0,
    "last": 250.0,
    "min": 139.0,
    "max": 250.0
+  },
+  "lockout_flag": {
+   "published": 8,
+   "first": 0.0,
+   "last": 0.0,
+   "min": 0.0,
+   "max": 0.0
   },
   "compressor_speed_target": {
    "published": 8,
@@ -366,5 +436,7 @@
    "max": 480.0
   }
  },
- "never_published": []
+ "never_published": [
+  "condensor_inlet_temp"
+ ]
 }

@@ -45,23 +45,43 @@ class SensorDef:
     device_class: str | None = None
     accuracy_decimals: int = 2
     icon: str = "mdi:help-circle-outline"
+    # Raw word meaning "this unit has no such sensor". Nothing is published
+    # for it, so the entity stays unknown instead of showing a scaled
+    # sentinel. `d2c` treats 0x8000 this way without being told, because
+    # -2048 C is not a reading any probe produces; set this for the other
+    # scales, where 0xFFFF is the usual spelling. Leave it None where the
+    # value is a legitimate state: 0x2100 reads 0xFFFF in 429,439 of 430,252
+    # polls here, and that is "no fault", not "no sensor".
+    no_value: int | None = None
 
+
+# Must match AroThermModbus::NO_SENTINEL: outside uint16_t, so no register
+# value can collide with it.
+_NO_SENTINEL = 0x10000
 
 _SCALE_CODE = {"raw": Scale.RAW, "uraw": Scale.URAW, "div10": Scale.DIV10, "div100": Scale.DIV100,
                "div50": Scale.DIV50, "div1000": Scale.DIV1000, "d2c": Scale.D2C, "f32": Scale.F32}
 
 SENSORS = [
     SensorDef("demand_mode", 0x1000, "raw", None, None, 0, "mdi:motion-play-outline"),
+    SensorDef("compressor_speed_command", 0x1002, "div10", "rps", None, 1, "mdi:send-clock-outline"),
     SensorDef("building_pump_power", 0x1003, "div10", UNIT_PERCENT, DEVICE_CLASS_POWER_FACTOR, 1, "mdi:pump"),
+    SensorDef("episode_active", 0x1004, "raw", None, None, 0, "mdi:play-circle-outline"),
+    SensorDef("condensor_inlet_temp", 0x1006, "d2c", UNIT_CELSIUS, DEVICE_CLASS_TEMPERATURE, 2,
+              "mdi:thermometer-chevron-up"),
     SensorDef("outside_temp", 0x1009, "d2c", UNIT_CELSIUS, DEVICE_CLASS_TEMPERATURE, 2, "mdi:thermometer"),
     SensorDef("building_circuit_flow_split", 0x100A, "raw", "l/h", None, 0, "mdi:pump"),
     SensorDef("hot_water_mode_active", 0x1012, "raw", None, None, 0, "mdi:water-boiler"),
     SensorDef("heat_output", 0x1014, "uraw", UNIT_WATT, DEVICE_CLASS_POWER, 0, "mdi:radiator"),
+    SensorDef("reinitialise_flag", 0x1018, "raw", None, None, 0, "mdi:restart-alert"),
     SensorDef("requested_flow_temp", 0x1019, "d2c", UNIT_CELSIUS, DEVICE_CLASS_TEMPERATURE, 2, "mdi:thermometer"),
     SensorDef("flow_return_calibration", 0x1109, "d2c", "K", DEVICE_CLASS_TEMPERATURE, 4, "mdi:tune-variant"),
+    SensorDef("silent_mode_active", 0x110D, "raw", None, None, 0, "mdi:volume-low"),
+    SensorDef("outdoor_mode", 0x2000, "raw", None, None, 0, "mdi:motion-play-outline"),
     SensorDef("building_circuit_flow_target", 0x2001, "raw", "l/h", None, 0, "mdi:pump"),
     SensorDef("compressor_speed_max", 0x2002, "div10", "rps", None, 1, "mdi:arrow-collapse-up"),
     SensorDef("compressor_speed_min", 0x2003, "div10", "rps", None, 1, "mdi:arrow-collapse-down"),
+    SensorDef("test_program", 0x2005, "raw", None, None, 0, "mdi:wrench-clock"),
     SensorDef("defrost_sequence", 0x2006, "raw", None, None, 0, "mdi:snowflake-alert"),
     SensorDef("compressor_inlet_temp", 0x2007, "d2c", UNIT_CELSIUS, DEVICE_CLASS_TEMPERATURE, 2, "mdi:thermometer"),
     SensorDef("compressor_outlet_temp", 0x2008, "d2c", UNIT_CELSIUS, DEVICE_CLASS_TEMPERATURE, 2, "mdi:thermometer"),
@@ -74,13 +94,18 @@ SENSORS = [
     SensorDef("high_pressure", 0x200F, "div10", "bar", DEVICE_CLASS_PRESSURE, 2, "mdi:gauge"),
     SensorDef("compressor_speed", 0x2010, "div10", "rps", None, 1, "mdi:sync"),
     SensorDef("fan1_speed", 0x2011, "raw", "rpm", None, 1, "mdi:fan"),
-    SensorDef("water_pressure", 0x2013, "div10", "bar", DEVICE_CLASS_PRESSURE, 2, "mdi:gauge"),
+    SensorDef("water_pressure", 0x2013, "div10", "bar", DEVICE_CLASS_PRESSURE, 2, "mdi:gauge",
+              no_value=0xFFFF),
     SensorDef("building_circuit_flow", 0x2014, "raw", "l/h", None, 0, "mdi:pump"),
     SensorDef("run_phase", 0x2015, "raw", None, None, 0, "mdi:state-machine"),
+    SensorDef("compressor_power", 0x2018, "raw", UNIT_WATT, DEVICE_CLASS_POWER, 0, "mdi:engine"),
     SensorDef("mains_voltage", 0x201B, "div50", UNIT_VOLT, DEVICE_CLASS_VOLTAGE, 0, "mdi:sine-wave"),
     SensorDef("active_current", 0x201C, "div1000", "A", DEVICE_CLASS_CURRENT, 2, "mdi:current-ac"),
+    SensorDef("fault_code", 0x2100, "uraw", None, None, 0, "mdi:alert-circle-outline"),
     SensorDef("electric_power_consumption", 0x211B, "raw", UNIT_WATT, DEVICE_CLASS_POWER, 0, "mdi:lightning-bolt"),
+    SensorDef("holdoff_countdown", 0x211C, "raw", "s", DEVICE_CLASS_DURATION, 0, "mdi:timer-sand-complete"),
     SensorDef("eev_position", 0x2120, "raw", "deg", None, 0, "mdi:valve"),
+    SensorDef("lockout_flag", 0x2121, "raw", None, None, 0, "mdi:lock-outline"),
     SensorDef("compressor_speed_target", 0x2122, "div10", "rps", None, 1, "mdi:sync-circle"),
     SensorDef("fan_speed_target", 0x2123, "raw", "rpm", None, 0, "mdi:fan-clock"),
     SensorDef("condensing_temp", 0x2126, "d2c", UNIT_CELSIUS, DEVICE_CLASS_TEMPERATURE, 2, "mdi:thermometer-chevron-up"),
@@ -164,7 +189,8 @@ async def to_code(config):
     for sensor_def in SENSORS:
         if sensor_def.key in config:
             sens = await sensor.new_sensor(config[sensor_def.key])
-            cg.add(var.add_sensor(sensor_def.register, _SCALE_CODE[sensor_def.scale], sens))
+            no_value = _NO_SENTINEL if sensor_def.no_value is None else sensor_def.no_value
+            cg.add(var.add_sensor(sensor_def.register, _SCALE_CODE[sensor_def.scale], sens, no_value))
 
     for text_def in TEXT_SENSORS:
         if text_def.key in config:

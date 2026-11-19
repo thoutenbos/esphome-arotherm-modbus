@@ -57,6 +57,8 @@ class Harness : public AroThermModbus {
 struct SensorDef {
   uint16_t reg;
   AroThermModbus::Scale scale;
+  // Raw word meaning "no such sensor", or AroThermModbus::NO_SENTINEL.
+  uint32_t no_value;
 };
 
 AroThermModbus::Scale parse_scale(const std::string &s) {
@@ -114,7 +116,7 @@ int main() {
     for (size_t i = 0; i < defs.size(); i++) {
       auto s = std::make_unique<esphome::sensor::Sensor>();
       s->on_publish = [i](float v) { printf("P %zu %.6f\n", i, v); };
-      component->add_sensor(defs[i].reg, defs[i].scale, s.get());
+      component->add_sensor(defs[i].reg, defs[i].scale, s.get(), defs[i].no_value);
       sensors.push_back(std::move(s));
     }
     text_sensors.clear();
@@ -134,9 +136,13 @@ int main() {
     if (!(in >> cmd))
       continue;
     if (cmd == "S") {
-      std::string reg, scale;
+      // "S <reg> <SCALE> [no_value]"; the third field is absent for a sensor
+      // with no "not fitted" word of its own.
+      std::string reg, scale, no_value;
       in >> reg >> scale;
-      defs.push_back({(uint16_t) std::stoul(reg, nullptr, 16), parse_scale(scale)});
+      const uint32_t nv = (in >> no_value) ? (uint32_t) std::stoul(no_value, nullptr, 16)
+                                           : AroThermModbus::NO_SENTINEL;
+      defs.push_back({(uint16_t) std::stoul(reg, nullptr, 16), parse_scale(scale), nv});
       rebuild();
     } else if (cmd == "T") {
       std::string reg, kind;

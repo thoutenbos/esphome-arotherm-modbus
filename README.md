@@ -22,7 +22,7 @@ Also reported working on:
 > **[`REGISTERS.md`](REGISTERS.md)**: one table per
 > register block, every register's known identity/scale/`ebusd` mapping or
 > an explicit "unknown," covering the complete 271-register structure, not
-> just the 53 currently published as sensors - plus the machine's state
+> just the 64 currently published as sensors - plus the machine's state
 > machines and sequences (start, stop, mode change, defrost) and the
 > formulas behind the derived registers. This file covers the hardware,
 > wiring, installation and the published sensors. What changed between
@@ -109,7 +109,7 @@ Modbus RTU CRC-16 and decodes it by function code. A write request names its
 own start register; a read response does not, so it is attributed to the
 read request seen just before it (start register and count). Only when no
 matching request was seen - right after boot, or if the request was lost -
-does it fall back to the VWZ AI block lengths (34 -> `0x2000`, 98 ->
+does it fall back to the known block lengths (34 or 32 -> `0x2000`, 98 ->
 `0x2100`, 73 -> `0x2200`), and a response that matches neither is dropped.
 
 Each register is a big-endian 16-bit word, read as a signed integer unless
@@ -124,7 +124,9 @@ are published as text.
 
 *(Screenshot from an earlier version; the sensor list below is current.)*
 
-53 sensors: 50 numeric and 3 text. Every register is described in
+64 sensors: 61 numeric and 3 text. Four of them are internal flags of
+little use on a dashboard and are commented out in the example
+configuration. Every register is described in
 [`REGISTERS.md`](REGISTERS.md), which also explains the sequences the state
 sensors step through.
 
@@ -133,12 +135,12 @@ sensors step through.
 | HA sensor | register | notes |
 |---|---|---|
 | `Air Inlet Temp` | `0x200B` | °C, D2C. The air the evaporator actually sees |
-| `Outside Temp` | `0x1009` (write) | °C, D2C. The controller's damped outside temperature |
+| `Outside Temp` | `0x1009` (write) | °C, D2C. The controller's damped outside temperature. The controller's first write after it boots carries "no value", which publishes nothing |
 | `Flow Temp` | `0x200C` | °C, D2C. After the machine's flow/return calibration - see `Delta T` |
 | `Return Temp` | `0x200D` | °C, D2C. After the flow/return calibration |
 | `Delta T` | `0x2209`:`0x220A` (float) | K - the machine's own flow-minus-return *before* its calibration: `delta_t - (flow_temp - return_temp) = -flow_return_calibration`. Within 0.012 K of an MID-certified heat meter, where the calibrated pair reads up to 14% low at small differentials. Continuous rather than in 1/16 K steps |
 | `Requested Flow Temp` | `0x1019` (write) | °C, D2C. A fixed hot-water setpoint under hot water; the weather-compensated, modulated setpoint under space heating; while idle a weather-dependent value that is *not* the heating curve. Not on the aroTHERM Split plus |
-| `Flow-Return Calibration` | `0x1109` (write) | K, D2C (signed `raw / 16`) - Vaillant's D.003 (`CalibrationVLRL` in `ebusd`, which prints the raw count). The machine sets it itself and it can change: it has been seen to step `0` -> `-1` -> `-4` -> `-5` (-0.3125 K) within weeks |
+| `Flow-Return Calibration` | `0x1109` (write) | K, D2C (signed `raw / 16`) - Vaillant's D.003 (`CalibrationVLRL` in `ebusd`, which prints the raw count). The machine sets it itself and it can change: it has been seen to step `0` -> `-1` -> `-4` -> `-5` (-0.3125 K) -> `-3` within weeks. The controller re-measures it while the pump circulates with no heat input, for example in the air-venting test program |
 
 **Refrigerant circuit**
 
@@ -148,8 +150,9 @@ sensors step through.
 | `Compressor Outlet Temp` | `0x2008` | °C, D2C. A pipe temperature downstream of the compressor, not the discharge gas - it peaks in the mid-50s °C on a hot-water charge |
 | `EEV Outlet Temp` | `0x2009` | °C, D2C |
 | `Condensor Outlet Temp` | `0x200A` | °C, D2C |
-| `Condensing Temp` | `0x2126` | °C, D2C. `condensing - condensor_outlet` equals `Subcooling` exactly |
-| `Evaporating Temp` | `0x2128` | °C, D2C. `compressor_inlet - evaporating` equals `Superheat` exactly; drives the frost model |
+| `Condensor Inlet Temp` | `0x1006` (write) | °C, D2C. The refrigerant at the gas side of the plate heat exchanger, on units with an indoor unit (confirmed on an aroTHERM Split plus). A monoblock sends "no value" here, so on a VWZ AI + aroTHERM 75/8.1 this entity stays unknown |
+| `Condensing Temp` | `0x2126` | °C, D2C. `condensing - condensor_outlet` gives `Subcooling` to within one count in 98% of running polls |
+| `Evaporating Temp` | `0x2128` | °C, D2C. `compressor_inlet - evaporating` approximates `Superheat` (an aroTHERM Split plus computes its superheat from `EEV Outlet Temp` instead); drives the frost model |
 | `High Pressure` | `0x200F` | bar, `/10` |
 | `Low Pressure` | `0x200E` | bar, `/10` |
 | `Subcooling` | `0x212A` | K, D2C. The variable the expansion valve controls on this machine |
@@ -163,7 +166,8 @@ sensors step through.
 | HA sensor | register | notes |
 |---|---|---|
 | `Compressor Speed` | `0x2010` | rps, `/10` - measured |
-| `Compressor Speed Target` | `0x2122` | rps, `/10` - commanded; leads the measured speed |
+| `Compressor Speed Target` | `0x2122` | rps, `/10` - the target the drive is working to: the controller's `Compressor Speed Command` while modulating, the outdoor unit's own schedule at a start, a stop and in a defrost. Leads the measured speed |
+| `Compressor Speed Command` | `0x1002` (write) | rps, `/10` - the controller's speed command. The speed control loop lives in the controller: while it modulates, `Compressor Speed Target` takes this value on its next read. `0` in the pre-run and through a defrost |
 | `Compressor Speed Min` | `0x2003` | rps, `/10` - the lower bound of the permitted speed, the modulation floor: 30 rps at or below about 5 °C air inlet, 20 rps in mild weather. `0` (window closed) when idle, in the pre-run and during a defrost |
 | `Compressor Speed Max` | `0x2002` | rps, `/10` - the upper bound: 120 rps in the cold, falling in milder air. Fixed at 50-60 rps for 180 s after every start and 30-50 rps around a heating/hot-water changeover |
 | `Compressor Slew Limit` | `0x213F`:`0x2140` (float) | rps/s - how fast the speed target may move: 2.0 when idle, for 180 s after a start, around a changeover and through a defrost; 0.2 in free modulation |
@@ -189,19 +193,25 @@ sensors step through.
 
 | HA sensor | register | notes |
 |---|---|---|
-| `Electric Power Consumption` | `0x211B` | W, raw. Reads low against a separate electricity meter by a near-constant ratio - about 4.7% at normal load, about 7% when heavily throttled. 6-8 W in standby |
+| `Electric Power Consumption` | `0x211B` | W, raw. Reads low against a separate electricity meter by a near-constant ratio - about 4.7% at normal load, about 7% when heavily throttled. 6-8 W in standby. Does not include the circulation pump |
 | `Mains Voltage` | `0x201B` | V, `/50` (1 V resolution). Within 0.2 V of a separate mains voltage sensor. `0` while the drive sleeps, from 480 s after a stop until the next start |
 | `Mains Current` (`active_current`) | `0x201C` | A, `/1000` - power over voltage, rounded up to the next 0.1 A. `0` while the drive sleeps |
+| `Compressor Power` | `0x2018` | W, raw - the drive's own mains power. Unlike `Electric Power Consumption` it excludes the fan and standby load: 5-6 W at rest, rising with the cube of fan speed (about 20 W at 440 rpm, about 40 W at 620 rpm). `0` while the drive sleeps |
 
 **Demand and state**
 
 | HA sensor | register | notes |
 |---|---|---|
-| `Demand Mode` | `0x1000` (write) | the controller's command: `0` idle, `1` space heating, `2` hot water, `5` defrost (initiated by the outdoor unit and acknowledged by the controller) |
+| `Demand Mode` | `0x1000` (write) | the controller's command: `0` idle, `1` space heating, `2` hot water, `4` installer test program, `5` defrost (initiated by the outdoor unit and acknowledged by the controller), `6` re-initialise (for a few seconds after the controller regains an outdoor unit it had lost) |
+| `Outdoor Mode` | `0x2000` | the mode the outdoor unit is actually in, in the same codes. Follows `Demand Mode` 1.2 s later from idle, 91.2 s later on a heating/hot-water changeover with the compressor running (the moment the diverter valve moves), and originates `5` for a defrost |
 | `Demand State` | `0x2144` | the outdoor unit's demand and defrost state machine: `0` idle, `1` pre-run (60 s of pump and fan before the compressor), `3` running, `4` fan run-on after a stop (64 s, or 604 s at an air inlet of about 6 °C or below), and `5` `6` `7` `8` `9` `11` for the stages of a defrost. Both demand edges land within a second of the `Demand Mode` write |
 | `Run Phase` | `0x2015` | `0` idle, `1` a heating or hot-water episode in progress, `6` post-episode lockout. Holds `1` across many demand cycles inside one long heating call, so it does **not** mean the compressor is running - use `Demand Mode`, `Demand State` or `Compressor Speed` for that |
 | `Demand Window` | `0x215C` | `150` from the start hand-off until 482 s after the compressor stops, else `0` |
-| `Lockout Duration` | `0x221D`:`0x221E` (float) | s - a stored `480.0`: after the compressor stops, the drive sleeps and `Run Phase` unwinds only after this long. A floor on the off time between cycles |
+| `Lockout Duration` | `0x221D`:`0x221E` (float) | s - a stored `480.0`: how long the drive stays awake after the compressor stops, and how long `Run Phase` takes to unwind after an episode. It is not a restart lock - see `Hold-off Countdown` |
+| `Hold-off Countdown` | `0x211C` | s - the outdoor unit's minimum off-time, enforced by the outdoor unit itself: 180 s from every compressor stop (a demand raised earlier is accepted in the poll it reaches 0), and 485 s from the moment a lost controller is heard again, after which `Fault Code` clears |
+| `Episode Active` | `0x1004` (write) | *(commented out in the example)* `1` while the controller runs a heating or hot-water episode; `Run Phase` follows it 1-6 polls later |
+| `Lockout Flag` | `0x2121` | *(commented out in the example)* `0` from the start hand-off until 480 s after the compressor stops, `1` otherwise |
+| `Re-initialise Flag` | `0x1018` (write) | *(commented out in the example)* `1` together with `Demand Mode` 6 |
 
 **Defrost**
 
@@ -214,8 +224,21 @@ sensors step through.
 | `Defrost Reference Attempt` | `0x2148` | which attempt at taking that reference this is; `1` means the first try, values up to 4 have been seen. `0` until 600 s after the previous defrost |
 | `Time Since Defrost` | `0x214C` | s, unsigned - since the last defrost ended. A reset to `0` marks a defrost. It does not wrap: 18.2 h after a defrost it reaches 65,535 and drops to `0`, so `0` also means "none in the last 18 hours" |
 
-The full defrost sequence and the frost model that decides it are described
+A forced defrost from the installer test program (P.12) runs the same
+sequence. The full defrost sequence and the frost model that decides it are described
 in [`REGISTERS.md`](REGISTERS.md) sections 5.6 and 5.7.
+
+**Faults and settings**
+
+| HA sensor | register | notes |
+|---|---|---|
+| `Fault Code` | `0x2100` | the fault code shown on the Vaillant display, `65535` (`0xFFFF`) when there is none. Only one code has been seen so far: `9998`, F.9998 loss of communication, which the outdoor unit raises when a lost controller comes back and clears 485 s later. Other codes are expected to read the same way, but none has been seen to confirm it |
+| `Silent Mode Active` | `0x110D` (write) | `1` while the controller's noise-reduction program runs; the outdoor unit drops `Compressor Speed Max` to 84 rps for as long as it is set |
+| `Test Program` | `0x2005` | *(commented out in the example)* the step of an installer test program, `0` outside one: `4` air venting (P.06), `6` forced defrost (P.12) |
+
+An external power limit (EEBus) is not on this bus: the controller enforces
+it with `Demand Mode` and `Compressor Speed Command`, and cannot hold it
+during the 180 s start window, where the outdoor unit fixes the speed.
 
 **Identity**
 
@@ -227,6 +250,16 @@ in [`REGISTERS.md`](REGISTERS.md) sections 5.6 and 5.7.
 Temperatures use eBUS's D2C convention (`degrees C = raw / 16`, signed
 16-bit big-endian) - the same fixed-point convention eBUS uses, even
 though the framing around it is genuine Modbus, not eBUS-derived.
+
+### "No sensor fitted"
+
+A register whose probe is not fitted sends a marker rather than a reading,
+and publishing it scaled would put a plausible-looking wrong number in Home
+Assistant: `0x8000` on a temperature is -2048 °C, and `0xFFFF` on the water
+pressure is -0.1 bar. Neither is published, so the entity stays unknown.
+`0x8000` is treated this way on every temperature register; `Water Pressure`
+also treats `0xFFFF` this way. `Fault Code` does publish `0xFFFF`, because
+there it means "no fault".
 
 ### Differences between units
 
@@ -243,18 +276,27 @@ owns the water circuit:
 | read `0x2100` | 98 | 98 | 98 |
 | read `0x2200` | 73 | 73 | 73 |
 
-Because read responses are attributed to their request, the different
-lengths need no configuration. On an **aroTHERM Split plus**, leave out
-`water_pressure` (`0x2013` reads `0xFFFF`), `building_circuit_flow`
-(`0x2014`, always 0), `run_phase` (`0x2015`, 0 even with the compressor
-running) and `requested_flow_temp` (`0x1019`, beyond the 25-register write
-block), and use `building_circuit_flow_split` instead - see the commented
-block in [`arotherm-modbus.yaml`](arotherm-modbus.yaml).
+Read responses are attributed to their request, and every sensor is
+matched against the block that actually arrived, so a register past the end
+of a short block publishes nothing and its entity stays unknown - nothing
+needs configuring and nothing errors. On an **aroTHERM Split plus** the
+indoor unit owns the water circuit, so leave out `water_pressure` (`0x2013`,
+"no value"), `building_circuit_flow` (`0x2014`, always 0), `run_phase`
+(`0x2015`, 0 even with the compressor running) and `requested_flow_temp`
+(`0x1019`, beyond the 25-register write block), and use
+`building_circuit_flow_split` instead - see the commented block in
+[`arotherm-modbus.yaml`](arotherm-modbus.yaml).
 
-The register map was built on the VWZ AI + aroTHERM 75/8.1. On the other
-units only the basic temperatures, pressures, speeds, power and flow have
-been checked, and on the aroTHERM plus 7 kW the `Delta T` identity; treat
-the rest as unverified there - reports either way are welcome.
+The register map was built on the VWZ AI + aroTHERM 75/8.1. An aroTHERM
+Split plus capture from
+[#4](https://github.com/thoutenbos/esphome-arotherm-modbus/issues/4) is in
+the test data and has been checked against it; it differs in places -
+`Condensor Inlet Temp` only reads there, it computes its superheat from
+`EEV Outlet Temp`, and its compressor floor is 30 rps where the 75/8.1's is
+20 rps (see [`REGISTERS.md`](REGISTERS.md)). On the aroTHERM plus 7 kW only
+the basic readings and the `Delta T` identity have been checked. Treat
+anything else as unverified on those units - reports either way are
+welcome.
 
 ### Calculated values
 
@@ -282,7 +324,7 @@ the calibration offset.
 
 ### What's not decoded yet
 
-271 registers exist across six blocks on the VWZ AI; 53 sensors are
+271 registers exist across six blocks on the VWZ AI; 64 sensors are
 published from them (one, `building_circuit_flow_split`, mainly for the
 Split plus). The rest are echoes of an already-published register,
 constants and placeholders, static identity or configuration, a lead not
@@ -297,7 +339,10 @@ Raw message logging stays on regardless of what's decoded as a sensor -
 every reassembled, CRC-valid message is logged at `DEBUG` with its hex
 dump and, for every write request and every read response that follows its
 own request, a full per-register dump (`regs=[2000=0000(0.00) ...]`, each
-value also shown at the D2C `/16` scale).
+value also shown at the D2C `/16` scale). Bytes that cannot be framed as a
+message - line noise, or the ten-byte announcement a unit sends once when it
+powers up (`55 AA 00 FF 01 03 07 80 C0 E0`) - are logged as `UNFRAMED`
+lines instead of being dropped silently.
 
 The `0x1200` write block and the `0x2200` read block carry the indoor and
 outdoor units' serial numbers as ASCII, so a debug log contains them in

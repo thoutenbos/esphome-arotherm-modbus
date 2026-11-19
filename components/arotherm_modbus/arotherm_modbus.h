@@ -36,8 +36,18 @@ class AroThermModbus : public Component {
     F32,
   };
 
-  void add_sensor(uint16_t register_address, Scale scale, sensor::Sensor *sensor) {
-    this->sensors_.push_back({register_address, scale, sensor});
+  // A raw word that is outside uint16_t, so it can be stored in the same
+  // field as a real "no sensor" value without ever matching one. Must match
+  // _NO_SENTINEL in __init__.py.
+  static constexpr uint32_t NO_SENTINEL = 0x10000;
+
+  // `no_value` is the raw word this unit sends when the sensor behind the
+  // register is not fitted. Nothing is published for it, the same way a
+  // register past the end of a short block publishes nothing, so the entity
+  // stays unknown rather than carrying a scaled sentinel.
+  void add_sensor(uint16_t register_address, Scale scale, sensor::Sensor *sensor,
+                  uint32_t no_value = NO_SENTINEL) {
+    this->sensors_.push_back({register_address, scale, sensor, no_value});
   }
 
   // Registers published as text rather than as a number.
@@ -84,6 +94,14 @@ class AroThermModbus : public Component {
   // which is also where tests/harness.cpp feeds captured bytes in.
   void process_byte_(uint8_t byte, uint32_t now_us);
   void try_complete_adus_();
+  // Bytes that could not be framed as a function 0x03/0x10 message for slave
+  // 1 - another function code, an exception response, another address, or
+  // line noise. They are logged rather than dropped silently, because a
+  // power-up handshake or a fault report would look exactly like this.
+  void discard_front_byte_();
+  void flush_unframed_();
+  std::vector<uint8_t> unframed_;
+  static constexpr size_t UNFRAMED_FLUSH_LEN = 96;
   void log_and_decode_(size_t len);
   std::string format_registers_(const uint8_t *data, size_t len);
   // Start register and count of the most recent read request, used to
@@ -141,6 +159,7 @@ class AroThermModbus : public Component {
     uint16_t register_address;
     Scale scale;
     sensor::Sensor *sensor;
+    uint32_t no_value;
   };
   std::vector<RegisterSensor> sensors_;
 

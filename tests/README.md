@@ -27,7 +27,7 @@ covered automatically.
 
 | check | what it catches |
 |---|---|
-| **unit** - [`unit_cases.py`](unit_cases.py) | one scenario per decoding rule with the expected publishes written out: request attribution for 32/34/35-register `0x2000` blocks, the count fallback after boot or a lost request, dropping what can't be placed, signed and unsigned values, every scale (raw, unsigned raw, `/10`, `/50`, `/1000`, D2C and the 32-bit floats - including a float cut off by the end of its block and one that decodes to NaN/infinity), the three text sensors (serial number, firmware version, compressor ramp state: decoding, a value cut off by its block, publishing on change only), the `0x1000` write block with and without `0x1019`, the `0x1100` block's calibration, CRC errors, line noise, byte-at-a-time arrival |
+| **unit** - [`unit_cases.py`](unit_cases.py) | one scenario per decoding rule with the expected publishes written out: request attribution for 32/34/35-register `0x2000` blocks, the count fallback after boot or a lost request, dropping what can't be placed, signed and unsigned values, every scale (raw, unsigned raw, `/10`, `/50`, `/1000`, D2C and the 32-bit floats - including a float cut off by the end of its block and one that decodes to NaN/infinity), the three text sensors (serial number, firmware version, compressor ramp state: decoding, a value cut off by its block, publishing on change only), "no sensor fitted" markers publishing nothing (and `0xFFFF` still publishing where it is a state), unframed bytes logged as `UNFRAMED` in order, a 32-register response before any request placed in `0x2000`, the `0x1000` write block with and without `0x1019`, the `0x1100` block's calibration, CRC errors, line noise, byte-at-a-time arrival |
 | **framing** | every dataset, fed as one byte stream with no timing cues, must frame into exactly the ADUs it holds - and again with junk injected between every ADU |
 | **decode** | every ADU must publish exactly what the reference decoder says: same sensors, same order, same values (to 1e-4) |
 | **debug log** | the `regs=[...]` dump must match the reference's formatting of the same registers |
@@ -49,9 +49,19 @@ All short excerpts, serial numbers zeroed (CRCs recomputed):
 | `vwz-ai_dhw-running.hex` | aroTHERM 75/8.1 + VWZ AI | hot water, compressor at 60 rps |
 | `vwz-ai_dhw-stop.hex` | aroTHERM 75/8.1 + VWZ AI | hot water demand ending, compressor ramping down |
 | `vwz-ai_space-heating.hex` | aroTHERM 75/8.1 + VWZ AI | space heating (`demand_mode` 1) |
+| `split-plus_idle.hex` | aroTHERM Split plus (VWL 75/8.2 + VWL 77/8.2 IS) | standby; the shorter 25/14/24/32-register blocks |
+| `split-plus_space-heating.hex` | aroTHERM Split plus | space heating at 30 rps |
+| `split-plus_heating-demand.hex` | aroTHERM Split plus | a heating demand arriving after standby |
+| `split-plus_heating-start.hex` | aroTHERM Split plus | the compressor starting after the 60 s pre-run |
+| `split-plus_heating-stop.hex` | aroTHERM Split plus | the demand ending, compressor stopping |
+| `split-plus_dhw-running.hex` | aroTHERM Split plus | a hot-water charge |
+| `split-plus_dhw-abort-status-314.hex` | aroTHERM Split plus | the outdoor unit aborting a hot-water charge |
+| `split-plus_defrost-reverse.hex` | aroTHERM Split plus | defrost: the four-way valve reversing |
+| `split-plus_defrost-heater-on.hex` | aroTHERM Split plus | defrost: a heater switching on |
+| `split-plus_defrost-melt.hex` | aroTHERM Split plus | defrost: the melt |
 
-No aroTHERM Split plus capture is available yet; its 32-register `0x2000`
-block and 25-register `0x1000` block are covered by unit cases.
+The Split plus excerpts are from the capture contributed in
+[#4](https://github.com/thoutenbos/esphome-arotherm-modbus/issues/4).
 
 `.hex` files hold one ADU per line as hex bytes (`#` starts a comment); `.bin`
 files are raw bus bytes exactly as received.

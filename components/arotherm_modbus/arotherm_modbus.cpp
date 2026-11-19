@@ -234,6 +234,11 @@ void AroThermModbus::loop() {
              (unsigned) (STUCK_ADU_TIMEOUT_US / 1000), to_hex_(this->adu_.data(), this->adu_.size()).c_str());
     this->adu_.clear();
   }
+  // Nothing arriving and nothing pending: report what was discarded now, so
+  // its timestamp is the moment it happened and not that of the next message.
+  if (!got_byte && this->adu_.empty() && !this->unframed_.empty() &&
+      this->now_us_() - this->last_byte_us_ > STUCK_ADU_TIMEOUT_US)
+    this->flush_unframed_();
 }
 
 void AroThermModbus::process_byte_(uint8_t byte, uint32_t now_us) {
@@ -268,27 +273,43 @@ void AroThermModbus::try_complete_adus_() {
     if (this->adu_.size() < ADU_ADDRESS_LEN + ADU_FUNCTION_LEN)
       return;  // wait for address + function
     if (!looks_like_adu_start_(this->adu_)) {
-      this->adu_.erase(this->adu_.begin());
+      this->discard_front_byte_();
       continue;
     }
     const size_t want = expected_adu_length_(this->adu_);
     if (want == 0)
       return;
     if (want > MAX_ADU_LEN) {
-      this->adu_.erase(this->adu_.begin());
+      this->discard_front_byte_();
       continue;
     }
     if (this->adu_.size() < want)
       return;
     if (modbus_crc_valid_(this->adu_.data(), want)) {
+      this->flush_unframed_();
       this->log_and_decode_(want);
       this->adu_.erase(this->adu_.begin(), this->adu_.begin() + want);
       this->prev_adu_end_us_ = this->last_byte_us_;
       this->have_prev_adu_ = true;
       continue;
     }
-    this->adu_.erase(this->adu_.begin());
+    this->discard_front_byte_();
   }
+}
+
+void AroThermModbus::discard_front_byte_() {
+  this->unframed_.push_back(this->adu_.front());
+  this->adu_.erase(this->adu_.begin());
+  if (this->unframed_.size() >= UNFRAMED_FLUSH_LEN)
+    this->flush_unframed_();
+}
+
+void AroThermModbus::flush_unframed_() {
+  if (this->unframed_.empty())
+    return;
+  ESP_LOGD(TAG, "[%s] UNFRAMED bytes=%u [%s]", this->timestamp_().c_str(), (unsigned) this->unframed_.size(),
+           to_hex_(this->unframed_.data(), this->unframed_.size()).c_str());
+  this->unframed_.clear();
 }
 
 void AroThermModbus::log_and_decode_(size_t len) {
@@ -412,6 +433,12 @@ void AroThermModbus::publish_block_(const uint8_t *data, size_t header_len, uint
       continue;
     }
     const uint16_t word = (uint16_t) ((data[byte_off] << 8) | data[byte_off + 1]);
+    // "No sensor fitted": publish nothing, so the entity stays unknown
+    // instead of reporting the sentinel scaled into range. 0x8000 on a
+    // temperature is -2048 C and is always this; other scales name their own
+    // word, because 0xFFFF can be a legitimate state elsewhere.
+    if (word == rs.no_value || (rs.scale == Scale::D2C && word == 0x8000))
+      continue;
     const int32_t raw = rs.scale == Scale::URAW ? (int32_t) word : (int32_t) (int16_t) word;
     rs.sensor->publish_state(scale_value_(rs.scale, raw));
   }
@@ -537,6 +564,8 @@ void AroThermModbus::decode_message_(const uint8_t *data, size_t len) {
     // 0x2000 instead of 34.
     base_register = this->last_read_start_reg_;
   } else if (n_regs == 34) {  // fallback: no matching request seen yet
+    base_register = 0x2000;
+  } else if (n_regs == 32) {  // the same block on an aroTHERM Split plus
     base_register = 0x2000;
   } else if (n_regs == 98) {
     base_register = 0x2100;

@@ -48,14 +48,16 @@ def expect_2000(n):
     div50 = lambda i: (i * 16 + 1) / 50  # noqa: E731
     div1000 = lambda i: (i * 16 + 1) / 1000  # noqa: E731
     table = [
+        ("outdoor_mode", 0x00, raw),
         ("building_circuit_flow_target", 0x01, raw), ("compressor_speed_max", 0x02, div10), ("compressor_speed_min", 0x03, div10),
-        ("defrost_sequence", 0x06, raw),
+        ("test_program", 0x05, raw), ("defrost_sequence", 0x06, raw),
         ("compressor_inlet_temp", 0x07, d2c), ("compressor_outlet_temp", 0x08, d2c),
         ("eev_outlet_temp", 0x09, d2c), ("condensor_outlet_temp", 0x0A, d2c),
         ("air_inlet_temp", 0x0B, d2c), ("flow_temp", 0x0C, d2c), ("return_temp", 0x0D, d2c),
         ("low_pressure", 0x0E, div10), ("high_pressure", 0x0F, div10),
         ("compressor_speed", 0x10, div10), ("fan1_speed", 0x11, raw),
         ("water_pressure", 0x13, div10), ("building_circuit_flow", 0x14, raw), ("run_phase", 0x15, raw),
+        ("compressor_power", 0x18, raw),
         ("mains_voltage", 0x1B, div50), ("active_current", 0x1C, div1000),
     ]
     return [(k, f(off)) for k, off, f in table if off < n]
@@ -63,8 +65,11 @@ def expect_2000(n):
 
 def block_2100():
     regs = [0xFFFF] * 98
+    regs[0x00] = 9998       # fault_code: F.9998, read unsigned
     regs[0x1B] = 1234       # electric_power_consumption, W
+    regs[0x1C] = 120        # holdoff_countdown, s
     regs[0x20] = 350        # eev_position
+    regs[0x21] = 1          # lockout_flag
     regs[0x22] = 456        # compressor_speed_target, 45.6 rps
     regs[0x23] = 610        # fan_speed_target, rpm
     regs[0x26] = 600        # condensing_temp 37.5 C
@@ -88,13 +93,14 @@ def block_2100():
 
 
 EXPECT_2100 = [
-    ("electric_power_consumption", 1234.0), ("eev_position", 350.0),
+    ("fault_code", 9998.0), ("electric_power_consumption", 1234.0), ("holdoff_countdown", 120.0), ("eev_position", 350.0), ("lockout_flag", 1.0),
     ("compressor_speed_target", 45.6), ("fan_speed_target", 610.0), ("condensing_temp", 37.5),
     ("evaporating_temp", -5.0), ("subcooling", 3.75), ("superheat", -2.375), ("eev_position_status", -10.0),
     ("defrost_active", 0.0), ("derated_temp_ceiling", 79.75), ("compressor_slew_limit", 0.2), ("demand_state", 3.0),
     ("compressor_speed_stable_time", 41.0), ("fan_target_stable_time", 2373.0),
     ("defrost_reference_heat_output", 2907.0), ("defrost_reference_attempt", 1.0),
-    ("time_since_defrost", 40000.0), ("demand_window", 150.0),
+    ("time_since_defrost", 40000.0),
+    ("demand_window", 150.0),
     ("defrost_capacity_loss", 2.75),
 ]
 
@@ -120,19 +126,25 @@ def block_1100(calibration=0xFFFB):
 def block_1000(n=26):
     regs = [0] * n
     regs[0x00] = 1          # demand_mode: space heating
+    regs[0x02] = 300        # compressor_speed_command 30.0 rps
     regs[0x03] = 849        # building_pump_power 84.9 %
+    regs[0x04] = 1          # episode_active
+    regs[0x06] = 640        # condensor_inlet_temp 40.0 C (0x8000 on a monoblock)
     regs[0x09] = 0xFFB8     # outside_temp -4.5 C (signed)
     regs[0x0A] = 1213       # building_circuit_flow_split, l/h
     regs[0x12] = 1          # hot_water_mode_active
     regs[0x14] = 2604       # heat_output, W
+    regs[0x18] = 0          # reinitialise_flag
     if n > 0x19:
         regs[0x19] = 35 * 16  # requested_flow_temp 35 C
     return regs
 
 
 EXPECT_1000 = [
-    ("demand_mode", 1.0), ("building_pump_power", 84.9), ("outside_temp", -4.5),
-    ("building_circuit_flow_split", 1213.0), ("hot_water_mode_active", 1.0), ("heat_output", 2604.0), ("requested_flow_temp", 35.0),
+    ("demand_mode", 1.0), ("compressor_speed_command", 30.0), ("building_pump_power", 84.9),
+    ("episode_active", 1.0), ("condensor_inlet_temp", 40.0), ("outside_temp", -4.5),
+    ("building_circuit_flow_split", 1213.0), ("hot_water_mode_active", 1.0), ("heat_output", 2604.0),
+    ("reinitialise_flag", 0.0), ("requested_flow_temp", 35.0),
 ]
 
 def block_2100_ramp(state):
@@ -156,7 +168,65 @@ def block_1200(serial="21000000000000000000000000N8", n=25):
     return regs[:n]
 
 
+def block_2100_no_fault():
+    """0x2100 with no fault pending: 0xFFFF at 0x2100 is a state, not a
+    missing sensor, so it is still published."""
+    regs = block_2100()
+    regs[0x00] = 0xFFFF
+    return regs
+
+
+def block_1000_no_inlet(n=26):
+    """A monoblock's 0x1000 block: no indoor unit, so 0x1006 is 0x8000."""
+    regs = block_1000(n)
+    regs[0x06] = 0x8000
+    return regs
+
+
+def block_2000_no_sensors(n=34):
+    """0x2000 with two sensors absent: 0x2013 sends 0xFFFF (the water
+    pressure this component names as that register's no_value) and 0x2007
+    sends 0x8000, which every D2C register uses."""
+    regs = block_2000(n)
+    regs[0x13] = 0xFFFF
+    regs[0x07] = 0x8000
+    return regs
+
+
+def expect_without(expect, *keys):
+    return [(k, v) for k, v in expect if k not in keys]
+
+
+# A Modbus exception response (function 0x83, code 2) and a frame for another
+# slave: neither is a 0x03/0x10 message for slave 1, so neither is decoded.
+EXCEPTION = with_crc(bytes([0x01, 0x83, 0x02]))
+OTHER_SLAVE = with_crc(bytes([0x02, 0x03, 0x20, 0x00, 0x00, 0x22]))
+
 CASES = [
+    {
+        "name": "0x8000 on a D2C register publishes nothing, so the entity stays unknown",
+        "chunks": [write(0x1000, block_1000_no_inlet()), write_ack(0x1000, 26)],
+        "publish": expect_without(EXPECT_1000, "condensor_inlet_temp"),
+    },
+    {
+        "name": "a register's own no_value, and 0x8000, both publish nothing",
+        "chunks": [request(0x2000, 34), response(block_2000_no_sensors())],
+        "publish": expect_without(expect_2000(34), "water_pressure", "compressor_inlet_temp"),
+    },
+    {
+        "name": "0xFFFF is still published where it is a state, not a missing sensor",
+        "chunks": [request(0x2100, 98), response(block_2100_no_fault())],
+        # 0x2100 itself reads 0xFFFF in all but a few of this machine's polls:
+        # that is "no fault", and naming it no_value would hide the sensor.
+        "publish": [("fault_code", 65535.0)] + EXPECT_2100[1:],
+    },
+    {
+        "name": "bytes that are not a 0x03/0x10 message for slave 1 are logged as UNFRAMED, in order",
+        "chunks": [request(0x2200, 73), EXCEPTION, OTHER_SLAVE, request(0x2200, 73), response(block_2200())],
+        "publish": [("delta_t", 1.8125), ("lockout_duration", 480.0)],
+        "unframed": EXCEPTION + OTHER_SLAVE,
+        "adus": 3,
+    },
     {
         "name": "text: serial number from the 0x1200 write block, padding dropped, published once",
         "chunks": [write(0x1200, block_1200()), write_ack(0x1200, 25),
@@ -220,12 +290,12 @@ CASES = [
     {
         "name": "0x1100 write block: flow_return_calibration is signed and /16 (-5 -> -0.3125 K)",
         "chunks": [write(0x1100, block_1100()), write_ack(0x1100, 15)],
-        "publish": [("flow_return_calibration", -0.3125)],
+        "publish": [("flow_return_calibration", -0.3125), ("silent_mode_active", 0.0)],
     },
     {
         "name": "0x1100 write block with 14 registers (Split plus) still carries the calibration",
         "chunks": [write(0x1100, block_1100(0)[:14]), write_ack(0x1100, 14)],
-        "publish": [("flow_return_calibration", 0.0)],
+        "publish": [("flow_return_calibration", 0.0), ("silent_mode_active", 0.0)],
     },
     {
         "name": "read response attributed to its request (VWZ AI, 34 registers)",
@@ -249,8 +319,15 @@ CASES = [
     },
     {
         "name": "response before any request with an unknown count is dropped",
-        "chunks": [response(block_2000(32))],
+        # 30 registers: not 34 or 32 (0x2000 on a VWZ AI and on a Split plus),
+        # not 98, not 73, so there is nothing to attribute it to.
+        "chunks": [response(block_2000(30))],
         "publish": [],
+    },
+    {
+        "name": "a 32-register response before any request is the Split plus 0x2000 block",
+        "chunks": [response(block_2000(32))],
+        "publish": expect_2000(32),
     },
     {
         "name": "request lost: 98-register response after a 0x2000 request is still 0x2100",
@@ -259,7 +336,7 @@ CASES = [
     },
     {
         "name": "request lost: response whose count matches neither request nor fallback is dropped",
-        "chunks": [request(0x2000, 34), response(block_2000(32))],
+        "chunks": [request(0x2000, 34), response(block_2000(30))],
         "publish": [],
     },
     {

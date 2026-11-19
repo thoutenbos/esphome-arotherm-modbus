@@ -32,7 +32,9 @@ WRITE = 0x10
 # Fallback block for a read response that does not follow a matching read
 # request (e.g. the very first message after boot, or a dropped request):
 # the register counts seen on the VWZ AI / aroTHERM 75/8.1.
-FALLBACK_BLOCK_BY_COUNT = {34: 0x2000, 98: 0x2100, 73: 0x2200}
+# 32 is the same block on an aroTHERM Split plus, which reads two fewer
+# registers from 0x2000 than a VWZ AI / aroTHERM 75/8.1.
+FALLBACK_BLOCK_BY_COUNT = {34: 0x2000, 32: 0x2000, 98: 0x2100, 73: 0x2200}
 
 
 # --------------------------------------------------------------------------
@@ -115,6 +117,7 @@ class SensorSpec:
     key: str
     register: int
     scale: str  # "raw" | "uraw" | "div10" | "div50" | "div100" | "div1000" | "d2c" | "f32"
+    no_value: int | None = None  # raw word meaning "no such sensor on this unit"
 
 
 def load_sensors(path: str = COMPONENT_INIT) -> list[SensorSpec]:
@@ -126,7 +129,9 @@ def load_sensors(path: str = COMPONENT_INIT) -> list[SensorSpec]:
             specs = []
             for call in node.value.elts:
                 key, register, scale = (ast.literal_eval(a) for a in call.args[:3])
-                specs.append(SensorSpec(key, register, scale))
+                no_value = next((ast.literal_eval(kw.value) for kw in call.keywords
+                                 if kw.arg == "no_value"), None)
+                specs.append(SensorSpec(key, register, scale, no_value))
             return specs
     raise RuntimeError("no SENSORS table in " + path)
 
@@ -228,6 +233,10 @@ class ReferenceDecoder:
                 v = float32_of(regs[i], regs[i + 1])
                 if math.isfinite(v):
                     publishes.append((s.key, v))
+                continue
+            # "no sensor fitted" publishes nothing: 0x8000 is -2048 C on any
+            # d2c register, and a spec may name one more word for its scale.
+            if regs[i] == s.no_value or (s.scale == "d2c" and regs[i] == 0x8000):
                 continue
             publishes.append((s.key, scale_value(s.scale, regs[i])))
         # The debug dump only names registers it can place with certainty:

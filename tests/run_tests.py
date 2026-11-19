@@ -57,6 +57,7 @@ TOLERANCE = 1e-4
 IDLE_GAP_US = 5000
 NOISE = [b"\x00", b"\xff\xff", b"\x01", b"\x01\x03", b"\x01\x10\x10\x00", b"\x01\x03\x44\x00\x01", b"\x55\xaa"]
 
+UNFRAMED_LOG = re.compile(r"UNFRAMED bytes=\d+ \[([0-9A-F ]+)\]$")
 ADU_LOG = re.compile(r"len=(\d+) \[([0-9A-F ]+)\](?: ascii=\[.*?\])?(?: regs=\[(.*)\])?$")
 
 
@@ -93,12 +94,15 @@ class Run:
         self.problems: list[str] = []
         self.pending: list[tuple[str, float]] = []
         self.texts: list[tuple[str, str]] = []
+        self.unframed = b""
 
 
 def run_firmware(exe: str, sensors, streams: list[list[bytes]]) -> list[Run]:
     """Feed each stream (a list of byte chunks, bus-idle between chunks) to a
     fresh component instance."""
-    lines = ["S %04X %s" % (s.register, s.scale.upper()) for s in sensors]
+    lines = ["S %04X %s" % (s.register, s.scale.upper())
+             + ("" if s.no_value is None else " %04X" % s.no_value)
+             for s in sensors]
     lines += ["T %04X %s" % (reg, kind.upper()) for _, reg, kind in TEXT_SENSORS]
     for chunks in streams:
         lines.append("N")
@@ -127,7 +131,10 @@ def run_firmware(exe: str, sensors, streams: list[list[bytes]]) -> list[Run]:
         elif line.startswith("L "):
             level, msg = line[2], line[4:]
             m = ADU_LOG.search(msg) if level == "D" else None
-            if m:
+            u = UNFRAMED_LOG.search(msg) if level == "D" else None
+            if u:
+                cur.unframed += bytes.fromhex(u.group(1))
+            elif m:
                 adu = bytes.fromhex(m.group(2))
                 if int(m.group(1)) != len(adu):
                     cur.problems.append("logged len %s for %d bytes" % (m.group(1), len(adu)))
@@ -300,6 +307,9 @@ def test_unit(exe, sensors, args, errors) -> int:
         got = [p for _, pubs, _ in run.adus for p in pubs]
         if not same_publishes(got, case["publish"]):
             errors.append("%s:\n      published %s\n      expected  %s" % (case["name"], got, case["publish"]))
+        if "unframed" in case and run.unframed != case["unframed"]:
+            errors.append("%s:\n      unframed %s\n      expected %s"
+                          % (case["name"], run.unframed.hex(" "), case["unframed"].hex(" ")))
         if "text" in case and run.texts != case["text"]:
             errors.append("%s:\n      text published %s\n      expected       %s" % (case["name"], run.texts, case["text"]))
         if "adus" in case and len(run.adus) != case["adus"]:
@@ -325,6 +335,7 @@ def test_hygiene(sensors, errors) -> int:
 
     keys = {s.key for s in sensors} | {k for k, _, _ in TEXT_SENSORS}
     in_block = False
+    configured = set()
     for line in open(EXAMPLE_YAML):
         if re.match(r"^arotherm_modbus:", line):
             in_block = True
@@ -332,9 +343,18 @@ def test_hygiene(sensors, errors) -> int:
         if in_block and re.match(r"^\S", line):
             break
         m = re.match(r"^  #? ?([a-z0-9_]+):", line) if in_block else None
-        if m and m.group(1) not in ("time_id", "rx_pin", "baud_rate", "id") and m.group(1) not in keys:
-            errors.append("arotherm-modbus.yaml uses unknown sensor key %s" % m.group(1))
-    print("  ok   data files scrubbed and listed, example config keys valid"
+        if m and m.group(1) not in ("time_id", "rx_pin", "baud_rate", "id"):
+            if m.group(1) not in keys:
+                errors.append("arotherm-modbus.yaml uses unknown sensor key %s" % m.group(1))
+            else:
+                configured.add(m.group(1))
+    # Every sensor the component offers is configured, so a new SensorDef
+    # cannot be added without the example config gaining it too. A sensor
+    # that is wrong for this machine stays listed and commented out rather
+    # than being left out; the regex above reads a commented key as present.
+    for key in sorted(keys - configured):
+        errors.append("arotherm-modbus.yaml is missing sensor key %s" % key)
+    print("  ok   data files scrubbed and listed, every sensor key configured"
           if not errors else "  FAIL hygiene")
     return 1
 

@@ -40,7 +40,8 @@ Six blocks are exchanged in a fixed cycle of **1.2004 s**:
 | +0.976 s | `0x1100` | write | 15 | 39-byte request |
 
 **Direction.** A `0x1xxx` register is written by the controller, so it is a
-command, a setting, or a value the controller computed and passes on. A
+command, a setting, a value the controller computed, or an acknowledgement of
+something the outdoor unit reported ([5.11](#511-who-decides-what)). A
 `0x2xxx` register is read from the outdoor unit, so it is something the
 outdoor unit measures or computes. Nothing sensed indoors (cylinder
 temperature, room temperature) appears on the read side.
@@ -83,7 +84,11 @@ blocks that change "one poll apart" may have changed together.
 - **Unknown** - moves, or is constant, with no identified meaning.
 
 A register that is only a Lead or Unknown is not published as a sensor in
-this release, even where it moves.
+this release, even where it moves - with one exception. `Fault Code`
+(`0x2100`) is published although its row reads Lead: the one code seen,
+`9998`, is F.9998 on the Vaillant display and `0xFFFF` is "none", so what the
+sensor reports is the code the machine is showing. The row stays a Lead only
+because no second code has appeared to test the encoding.
 
 ## 4. Register tables
 
@@ -98,23 +103,24 @@ values echoed back to the outdoor unit, and values the controller computed.
 
 | register | identity | scale | status | sensor |
 |---|---|---|---|---|
-| `0x1000` | **demand mode**: `0` idle, `1` space heating, `2` hot water, `5` defrost. The controller originates 0/1/2; for `5` it follows the outdoor unit's `0x2000` by 0.19 s | raw | Confirmed | `Demand Mode` |
+| `0x1000` | **demand mode**: `0` idle, `1` space heating, `2` hot water, `4` installer test program ([5.13](#513-settings-and-test-programs)), `5` defrost, `6` re-initialise (written for 5-10 s after the controller regains an outdoor unit it had lost, [5.12](#512-power-up-and-loss-of-communication)). The controller originates 0/1/2; for `5` it follows the outdoor unit's `0x2000` by 0.19 s | raw | Confirmed | `Demand Mode` |
 | `0x1001` | constant `0` | | Unknown | |
-| `0x1002` | compressor speed, smoothed echo of `0x2010` | `/10`, rps | Structural | |
+| `0x1002` | **compressor speed command.** While the controller modulates, the outdoor unit's target `0x2122` takes this value on its next read. `0` in the pre-run and through a defrost, when the outdoor unit runs its own schedule ([5.11](#511-who-decides-what)) | `/10`, rps | Structural | `Compressor Speed Command` |
 | `0x1003` | building circuit pump command | `/10`, % | Confirmed | `Building Pump Power` |
-| `0x1004` | unit-active flag: `1` while `0x2015` is `1` or `6` | raw | Structural | |
-| `0x1005` | condenser outlet temperature, echo of `0x200A` | D2C | Structural | |
-| `0x1006` | constant `0x8000` | | Unknown | |
+| `0x1004` | **episode-active flag**, set by the controller. `Run Phase` follows it 1-6 polls later | raw | Structural | `Episode Active` |
+| `0x1005` | condenser outlet temperature, echo of `0x200A`. `0x8000` once the outdoor unit has not answered for about 5 s | D2C | Structural | |
+| `0x1006` | **refrigerant temperature at the gas side of the plate heat exchanger** (condenser inlet) on a unit that has an indoor unit; constant `0x8000`, the "no value" marker, on this monoblock. A Split plus reads 22.7-75.2 °C here, above its own condensing temperature as superheated discharge gas must be, and uses it for the superheat while the circuit is reversed ([9](#9-where-these-findings-come-from)). Not published here: `0x8000` publishes nothing | D2C, °C | **Confirmed** (on a Split plus) | `Condensor Inlet Temp` |
 | `0x1007` | flow temperature, echo of `0x200C` | D2C | Structural | |
 | `0x1008` | return temperature, echo of `0x200D` | D2C | Structural | |
-| `0x1009` | outside temperature, as the controller uses it (damped) | D2C, °C | Confirmed | `Outside Temp` |
+| `0x1009` | outside temperature, as the controller uses it (damped). `0x8000` in the controller's first write after it boots | D2C, °C | Confirmed | `Outside Temp` |
 | `0x100A` | building circuit flow, exact echo of `0x2014`. On the Split plus the only flow reading | raw, l/h | Confirmed | `Building Circuit Flow` (`building_circuit_flow_split`, Split plus) |
-| `0x100B`-`0x1011` | constant `0` | | Unknown | |
+| `0x100B` | **test program step**, used with `Demand Mode` 4: `4` air venting, `6` forced defrost. The outdoor unit echoes it in `0x2005` | raw | Structural | |
+| `0x100C`-`0x1011` | constant `0` | | Unknown | |
 | `0x1012` | **outdoor unit is in hot-water mode**: `1` exactly when `0x2000 == 2`. Its edges are the moment the diverter valve moves | raw, 0/1 | Structural | `Hot Water Mode Active` |
 | `0x1013` | constant `0` | | Unknown | |
 | `0x1014` | **heat output**, computed by the controller from flow and the flow/return pair, and consumed by the outdoor unit's defrost logic ([6.1](#61-heat-output-0x1014)) | unsigned raw, W | Confirmed | `Heat Output` |
 | `0x1015`-`0x1017` | constant `0xFFFF` | | Unknown | |
-| `0x1018` | constant `0` | | Unknown | |
+| `0x1018` | **re-initialise flag**: `1` together with `Demand Mode` 6, otherwise `0` | raw, 0/1 | Structural | `Re-initialise Flag` |
 | `0x1019` | **requested flow temperature** ([6.8](#68-requested-flow-temperature-0x1019)) | D2C, °C | Confirmed | `Requested Flow Temp` |
 
 ### 4.2 Write block `0x1100` (15 registers)
@@ -129,10 +135,11 @@ Static configuration.
 | `0x1103` | constant `16` | | Unknown | |
 | `0x1104` | constant `0x8001` | | Unknown | |
 | `0x1105`-`0x1108` | constant `0` | | Unknown | |
-| `0x1109` | **flow/return calibration** (Vaillant D.003). The machine sets it itself; it has been seen to step from `0` to `-1`, `-4` and `-5` within a few weeks at the start of the heating season. One count is 1/16 K, so `-5` is -0.3125 K | D2C, K | Confirmed | `Flow-Return Calibration` |
+| `0x1109` | **flow/return calibration** (Vaillant D.003). The machine sets it itself; it has been seen to step from `0` to `-1`, `-4`, `-5` and `-3` over a few weeks. The controller re-measures it while the pump circulates with no heat input: the last change came at the end of a pump run in the venting program, with the return reading 3 counts above the flow. One count is 1/16 K, so `-5` is -0.3125 K | D2C, K | Confirmed | `Flow-Return Calibration` |
 | `0x110A` | constant `0` | | Unknown | |
 | `0x110B`-`0x110C` | constant `1` | | Unknown | |
-| `0x110D`-`0x110E` | constant `0` | | Unknown | |
+| `0x110D` | **silent mode active**: `1` while the controller's noise-reduction program runs. The outdoor unit drops `Compressor Speed Max` to 84.0 rps in the same poll | raw, 0/1 | Structural | `Silent Mode Active` |
+| `0x110E` | constant `0` | | Unknown | |
 
 ### 4.3 Write block `0x1200` (25 registers)
 
@@ -150,11 +157,12 @@ Identity, written by the controller.
 
 | register | identity | scale | status | sensor |
 |---|---|---|---|---|
-| `0x2000` | **mode the outdoor unit is actually in**, same codes as `0x1000`. Follows the request by 1.2 s from idle and by 91.2 s when changing between heating and hot water with the compressor running. Originates `5` (defrost) | raw | Structural | |
+| `0x2000` | **mode the outdoor unit is actually in**, same codes as `0x1000`. Follows the request by 1.2 s from idle and by 91.2 s when changing between heating and hot water with the compressor running. Originates `5` (defrost). `4` during an installer test program | raw | Structural | `Outdoor Mode` |
 | `0x2001` | **requested building circuit flow** ([6.9](#69-circuit-flow-request-0x2001)) | raw, l/h | Confirmed | `Building Circuit Flow Target` |
 | `0x2002` | **upper bound of the permitted compressor speed** ([6.6](#66-compressor-speed-window-0x2002-0x2003)) | `/10`, rps | Confirmed | `Compressor Speed Max` |
 | `0x2003` | **lower bound of the permitted compressor speed**, the modulation floor | `/10`, rps | Confirmed | `Compressor Speed Min` |
-| `0x2004`-`0x2005` | constant `0` | | Unknown | |
+| `0x2004` | `1` for two polls at the end of the forced-defrost test, otherwise `0`. Possibly "test step complete"; seen once | raw | Lead | |
+| `0x2005` | **test program step**, echo of `0x100B` one poll later | raw | Structural | `Test Program` |
 | `0x2006` | **defrost sequence in progress**: `1` exactly while `0x2144` is in `{5,6,7,8,9,11}` | raw, 0/1 | Confirmed | `Defrost Sequence` |
 | `0x2007` | compressor inlet temperature | D2C, °C | Confirmed | `Compressor Inlet Temp` |
 | `0x2008` | compressor outlet temperature. A pipe sensor: it peaks near 54 °C on a 60 °C charge, so it is not the discharge gas temperature | D2C, °C | Confirmed | `Compressor Outlet Temp` |
@@ -172,13 +180,13 @@ Identity, written by the controller.
 | `0x2014` | **building circuit flow**, the flow sensor. Within 2% of a MID-certified heat meter in every mode | raw, l/h | Confirmed | `Building Circuit Flow` |
 | `0x2015` | **run phase** ([5.9](#59-run-phase-0x2015)) | raw | Confirmed | `Run Phase` |
 | `0x2016`-`0x2017` | constant `0` | | Unknown | |
-| `0x2018` | electric power, echo of `0x211B` | raw, W | Structural | |
+| `0x2018` | electric power, **echo of `0x201D`** - not of `0x211B` | raw, W | Structural | `Compressor Power` |
 | `0x2019` | fan speed, echo of `0x2011` | raw, rpm | Structural | |
 | `0x201A` | constant `0` | | Unknown | |
 | `0x201B` | **mains voltage**. `0` while the drive sleeps (idle beyond the 480 s lockout) | `/50`, V | Confirmed | `Mains Voltage` |
 | `0x201C` | **mains current**, rounded up to the next 0.1 A ([6.3](#63-mains-current-0x201c)) | `/1000`, A | Confirmed | `Mains Current` (`active_current`) |
-| `0x201D` | electric power, echo of `0x211B` | raw, W | Structural | |
-| `0x201E` | compressor motor voltage. Tracks speed at 2.2-2.8 V per rps and never exceeds the mains voltage | `/50`, V | Lead (strong) | |
+| `0x201D` | **the drive's own mains power**, copied to `0x2018` in the same read. Not `0x211B`, which adds the fan and standby load: the two agree in 0.0099% of samples while `0x2018` equals `0x201D` in **99.615%** of 344,398. Exact in four of the seven captures that carry the block; the residue is 8, 392 and 926 frames differing by only -40 to +6 W, about a third of them matching the neighbouring sample - one-poll transients while the power ramps, with no block skew available to blame since both ride the same `0x2000` response. The 37 W median gap to `ebusd`'s consumption field is the fan and standby load this figure excludes | raw, W | Structural | |
+| `0x201E` | compressor motor voltage. **2.33 V per rps at every speed** from 20 to 90 rps (48 V at 20, 70 V at 30, 140 V at 60), never above the mains voltage and reaching it at top speed. Each poll carries about ±4 V of noise that is the same size at every speed and follows nothing else on the bus, so it is a raw instantaneous sample; average it before reading anything into it. The scale is not ten times too high: on `/500` the motor's apparent power would be a tenth of the electrical power it is drawing | `/50`, V | Lead (strong) | |
 | `0x201F` | compressor motor current. Zero exactly when the compressor is stopped. A quantity proportional to torque fits equally well | `/1000`, A | Lead (strong) | |
 | `0x2020` | a second flow-like figure. Zero exactly when the pump is stopped, within a few percent of `0x2014`, with a gap that follows the pump's operating point ([6.10](#610-the-second-flow-figure-0x2020)) | raw | Unknown | |
 | `0x2021` | `0x201C + 1600` | raw | Structural | |
@@ -187,38 +195,40 @@ Identity, written by the controller.
 
 | register | identity | scale | status | sensor |
 |---|---|---|---|---|
-| `0x2100`-`0x2118` | constant `0xFFFF` | | Structural | |
+| `0x2100` | **fault code**, as shown on the Vaillant display: `9998` is F.9998, loss of communication. `0xFFFF` when there is none. Only this one code has been seen | unsigned raw | Lead (strong) | `Fault Code` |
+| `0x2101`-`0x2118` | constant `0xFFFF`. Most likely further fault slots | | Lead | |
 | `0x2119` | constant `0` | | Unknown | |
 | `0x211A` | constant `1` | | Unknown | |
-| `0x211B` | **electric power consumption**. Reads about 4.7% below a separate meter at normal load | raw, W | Confirmed | `Electric Power Consumption` |
-| `0x211C` | **180 s countdown**, started by every compressor stop ([5.4](#54-stop-sequence)) | raw, s | Structural | |
-| `0x211D`-`0x211F` | constant `1` | | Unknown | |
+| `0x211B` | **electric power consumption**. Reads about 4.7% below a separate meter at normal load. It does not include the circulation pump: it reads 6 W with the pump at 100% and nothing else running | raw, W | Confirmed | `Electric Power Consumption` |
+| `0x211C` | **hold-off countdown**: 180 s from every compressor stop, 485 s from the moment a lost controller is heard again. The fault code clears when it reaches 0 ([5.4](#54-stop-sequence), [5.12](#512-power-up-and-loss-of-communication)) | raw, s | Structural | `Hold-off Countdown` |
+| `0x211D` | constant `1`, except in the outdoor unit's last response before it lost power, where it read `0`. Possibly a supply-present flag; seen once | raw | Lead | |
+| `0x211E`-`0x211F` | constant `1` | | Unknown | |
 | `0x2120` | expansion valve position, absolute | raw, steps | Confirmed | `EEV Position` |
-| `0x2121` | lockout flag: `0` from the start hand-off until 480 s after the compressor stops, `1` otherwise | raw | Structural | |
-| `0x2122` | **compressor speed target** | `/10`, rps | Confirmed | `Compressor Speed Target` |
+| `0x2121` | lockout flag: `0` from the start hand-off until 480 s after the compressor stops, `1` otherwise | raw | Structural | `Lockout Flag` |
+| `0x2122` | **compressor speed target** the drive is working to: the controller's command `0x1002` while modulating, the outdoor unit's own schedule at a start, a stop and in a defrost | `/10`, rps | Confirmed | `Compressor Speed Target` |
 | `0x2123` | **fan speed target**. Leads the measured speed by 1-2 polls and sits just above it | raw, rpm | Structural | `Fan Speed Target` |
 | `0x2124` | constant `0` | | Unknown | |
 | `0x2125` | constant `1` | | Unknown | |
-| `0x2126` | **condensing temperature**. `condensing - condenser outlet` equals the subcooling exactly | D2C, °C | Confirmed | `Condensing Temp` |
+| `0x2126` | **condensing temperature**. `condensing - condenser outlet` gives the subcooling to within 1 count in 98.4% of running polls ([6.4](#64-refrigerant-cycle-identities)) | D2C, °C | Confirmed | `Condensing Temp` |
 | `0x2127` | constant `0` | | Unknown | |
-| `0x2128` | **evaporating temperature**. `compressor inlet - evaporating` equals the superheat exactly | D2C, °C | Confirmed | `Evaporating Temp` |
-| `0x2129` | subcooling, a looser copy of `0x212A` | D2C, K | Lead | |
+| `0x2128` | **evaporating temperature**. `compressor inlet - evaporating` approximates the superheat - centred, but only 77% within 1 count ([6.4](#64-refrigerant-cycle-identities)). Keeps reporting its own quantity while the circuit is reversed, where a Split plus instead sets it equal to `0x200A`: here it equals that register in 6 of 1,330 reversed polls, and no other register matches it in even half of them | D2C, °C | Confirmed | `Evaporating Temp` |
+| `0x2129` | **subcooling target**, not a looser copy of `0x212A`. A Split plus reports a plain setpoint here - 4.0 K heating, 5.0 K at a hot-water start, 1.0 K in state 5 - and on this machine it is clamped below at exactly **64 = 4.0 K**, never taking a value between 1 and 63: in the 41,855 running polls where the measured subcooling is under 4.0 K it reads only 64-68. It is not a pure setpoint here, taking 23-49 distinct values per capture, so the reading is the floor rather than the whole quantity. The Split plus identity `0x2129 == 0x215F` does **not** port: `0x215F` is constant 0 in all fourteen captures | D2C, K | Lead | |
 | `0x212A` | **subcooling** | D2C, K | Confirmed | `Subcooling` |
 | `0x212B` | constant `0` | | Unknown | |
 | `0x212C` | **superheat** | D2C, K | Confirmed | `Superheat` |
 | `0x212D` | expansion valve position, percent | `/10`, % | Confirmed | `EEV Position Status` |
 | `0x212E` | lockout flag, the inverse of `0x2121` | raw | Structural | |
-| `0x212F`-`0x2130` | constant `0` | | Unknown | |
+| `0x212F`-`0x2130` | constant `0` here. On a Split plus `0x212F` **switches a heater of about 180 W**, so the output exists in the protocol and is unused on this machine ([9](#9-where-these-findings-come-from)) | | Unknown | |
 | `0x2131` | **refrigerant circuit reversed**: `1` exactly while `0x2144` is in `{6,7,8}` | raw, 0/1 | Confirmed | `Defrost Active` |
 | `0x2132`-`0x2136` | constant `0` | | Unknown | |
 | `0x2137` | **de-rated temperature ceiling** ([6.5](#65-de-rated-temperature-ceiling-0x2137)). Which temperature it caps is a Lead | D2C, °C | Confirmed (curve) | `Derated Temp Ceiling` |
 | `0x2138` | constant `1200`: the 120.0 rps at which `0x2002` clamps | `/10`, rps | Lead | |
-| `0x2139` | constant `200`: the 20.0 rps floor of `0x2003` | `/10`, rps | Lead | |
+| `0x2139` | constant `200`: **the stored modulation floor**, which `0x2003` is never allowed below. `0x2003 >= 0x2139` in **174,131 samples with 0 violations**, and `0x2003` sits exactly on it in 41-98% of frames in the four recent captures; the two older ones floor at 251 and 286, above it. A Split plus carries **300** here and floors its own `0x2003` at exactly 300 - the same relation on a machine whose minimum is 30.0 rps where this one's is 20.0 ([9](#9-where-these-findings-come-from)) | `/10`, rps | Confirmed | |
 | `0x213A` | defrost-sequence flag, identical to `0x2006` | raw, 0/1 | Structural | |
-| `0x213B`-`0x213E` | constant `0` | | Unknown | |
+| `0x213B`-`0x213E` | constant `0` here. On a Split plus `0x213B` is set in exactly the cycles `0x212F` is, and that data cannot tell the two apart | | Unknown | |
 | `0x213F`:`0x2140` | **compressor slew limit**: how fast the speed target may move. `2.0` or `0.2` ([6.7](#67-compressor-slew-limit-0x213f)) | f32, rps/s | Confirmed | `Compressor Slew Limit` |
 | `0x2141` | expansion valve position, echo of `0x2120` | raw | Structural | |
-| `0x2142` | constant `55` | | Unknown | |
+| `0x2142` | **expansion valve lower limit**. Constant `55` here, so this machine alone cannot show it is one; a Split plus moves it - 70 while running, about 225 falling back after a defrost, and 0 while the circuit is reversed - which is a valve floor and nothing else ([9](#9-where-these-findings-come-from)) | raw, steps | Lead | |
 | `0x2143` | constant `525`: the valve's end stop, reached before every defrost | raw, steps | Lead | |
 | `0x2144` | **demand and defrost state machine** ([5.1](#51-the-demand-state-machine-0x2144)) | raw | Confirmed | `Demand State` |
 | `0x2145` | **compressor speed stable time**: seconds since the speed last left a ±3.0% band. Consumed by the frost model ([5.7](#57-the-frost-model-and-the-defrost-decision)) | unsigned raw, s | Confirmed | `Compressor Speed Stable Time` |
@@ -253,7 +263,7 @@ Identity and stored parameters. Only `0x2209`:`0x220A` moves.
 | register | identity | scale | status | sensor |
 |---|---|---|---|---|
 | `0x2200`-`0x2202` | constant `1` | | Unknown | |
-| `0x2203`-`0x2205` | **firmware version** `405`, `4`, `7`, confirmed against the unit | raw | Confirmed | `Firmware Version` (text) |
+| `0x2203`-`0x2205` | **firmware version**, e.g. `405`, `4`, `7` for 405.4.7, confirmed against the unit's display | raw | Confirmed | `Firmware Version` (text) |
 | `0x2206`-`0x2207` | constant `0xFFFF` | | Unknown | |
 | `0x2208` | constant `600`. One of two 600 s constants (with `0x221B`); the frost gate and the defrost re-arm interval are both 600 s | raw, s | Lead | |
 | `0x2209`:`0x220A` | **flow minus return, uncalibrated**. Within 0.012 K of the certified heat meter | f32, K | Confirmed | `Delta T` |
@@ -339,7 +349,7 @@ starts, for heating and hot water alike.
 | +1.2 | the outdoor unit accepts: `0x2000` follows, `Building Circuit Flow Target` 0 -> 1205, `Fan Speed Target` 0 -> 220, `Run Phase` -> 1 |
 | +2.4 | `Demand State` 0 -> 1, `0x2157` -> -480, `Fan Target Stable Time` starts |
 | +8 to +10 | the fan turns |
-| +61.2 | **hand-off**: `Compressor Speed Target` 0 -> 50.0 rps, the speed window opens at [50, 60] rps, `0x2121` 1 -> 0 |
+| +61.2 | **hand-off**: `Compressor Speed Target` 0 -> 50.0 rps, the speed window opens at [50, 60] rps, `0x2121` 1 -> 0. One restart, four minutes after a stop, opened at 40.0 rps and [40, 60] instead |
 | +62.4 | `Demand State` 1 -> 3; the drive wakes (`Mains Voltage` leaves 0) |
 | +63.6 | `Demand Window` 0 -> 150; the drive temperatures start reading |
 | +67 to +70 | the compressor turns. `Compressor Ramp State` goes `Starting` -> `Ramping up` |
@@ -360,22 +370,26 @@ Offsets from the poll in which the compressor speed reaches 0.
 | offset | event |
 |---|---|
 | -2 to -23 | `Demand Mode` -> 0. One poll later `Compressor Speed Target` -> 0 and `Compressor Slew Limit` -> 2.0. The compressor coasts down: 2 s from 20-30 rps, about 20 s from 60 rps. `Compressor Ramp State` shows `Ramping down to stop` |
-| 0 | compressor at 0. `Demand State` 3 -> 4, the speed window closes, `Compressor Ramp State` -> `Off`, **the 180 s countdown `0x211C` starts at 179** |
+| 0 | compressor at 0. `Demand State` 3 -> 4, the speed window closes, `Compressor Ramp State` -> `Off`, **`Hold-off Countdown` starts at 179** |
 | +25 to +46 | refrigerant high and low pressure have equalised |
 | +64 **or** +604 | **end of the fan run-on**: `Fan Speed Target` -> 0, `0x2000` -> 0, `Building Circuit Flow Target` -> 0, `0x2157` -> 0; one poll later `Demand State` 4 -> 0 and the fan stops |
-| +180 | `0x211C` reaches 0. Nothing else on the bus changes |
-| +480 | **lockout ends**: the drive sleeps (`Mains Voltage` and the power echo `0x2018` -> 0), `0x2121` -> 1, `0x212E` -> 0 |
+| +180 | `Hold-off Countdown` reaches 0. Nothing else on the bus changes |
+| +480 | **the drive sleeps** (`Mains Voltage` and the power echo `0x2018` -> 0), `0x2121` -> 1, `0x212E` -> 0 |
 | +482 | `Demand Window` -> 0; the drive temperatures stop reading |
 
 **Fan run-on length depends on the air temperature.** 64 s at an air inlet of
 9.6 °C or above (6 of 6 stops), 604 s at 6.1 °C or below (4 of 4). The
 threshold lies between the two. `Demand State` 4 lasts exactly as long.
 
-**The 180 s countdown** is started by every compressor stop and by nothing
-else (10 of 10, none apart). What it guards cannot be seen: nothing changes at
-its expiry and no demand has ever returned within 1,667 s of a stop. The
-likeliest reading is the drive's own minimum off-time, underneath the
-controller's 480 s lockout.
+**The hold-off countdown** runs for 180 s after every compressor stop, and
+**the outdoor unit enforces it.** In the one capture where a demand came back
+early, the controller raised `Demand Mode` again 24 s after the stop, with 156 s
+still on the countdown. The outdoor unit left its own mode word at 0 and
+accepted the demand in the very poll the countdown reached 0; the pre-run
+followed and the compressor turned 242 s after it had stopped. So 180 s is the
+outdoor unit's minimum off-time, and **the 480 s is not a restart lock**: it is
+only how long the drive stays awake after a stop. The controller did not wait
+for either.
 
 **The pump.** In milder weather the pump stops with the fan run-on. In
 colder weather it keeps circulating between demands at a fixed 70-72%
@@ -416,8 +430,9 @@ demand.
 
 The outdoor unit decides ([5.7](#57-the-frost-model-and-the-defrost-decision))
 and the controller acknowledges: `0x2000` goes to `5` and the controller's
-`Demand Mode` follows 0.19 s later. Four defrosts were captured and all four
-ran identically except for the length of the melt.
+`Demand Mode` follows 0.19 s later. Five defrosts were captured, four in one
+night and a fifth five days later, and all five ran identically except for the
+length of the melt.
 
 | `Demand State` | length | what happens |
 |---|---|---|
@@ -449,8 +464,10 @@ and the model never went live in them.
 **Stage 2: the re-arm interval.** `Defrost Reference Attempt` (`0x2148`) goes
 `0 -> 1` when the model is live **and** `Time Since Defrost` has reached 600.
 That is a minimum of 600 s between the end of one defrost and the start of
-measuring for the next. Before the season's first defrost the counter stays at
-`0` and the next stages proceed without it.
+measuring for the next. Whenever `Time Since Defrost` reads 0 - before the
+season's first defrost, and again once it has rolled over 18.2 h after one -
+the counter stays at `0` and the next stages proceed without it. Both cases
+have been captured, each ending in a normal defrost.
 
 **Stage 3: taking the reference.** The reference needs a steady compressor.
 
@@ -458,7 +475,8 @@ measuring for the next. Before the season's first defrost the counter stays at
    `0x214B` is sampled.
 2. If the speed then stays inside its ±3% band for a further **180 s**, the
    reference arms: `Defrost Reference Heat Output` (`0x2147`) takes the **mean
-   of `Heat Output` over those 180 s**.
+   of `Heat Output` over those 180 s** (to the watt at five armings, within
+   2 W at a sixth).
 3. If the speed leaves the band first, `Defrost Reference Attempt` goes up by
    one. The next sample waits for **150 s** of stable speed, again followed by
    the 180 s.
@@ -473,14 +491,25 @@ reference was taken late, with some frost already on the coil.
     capacity loss = 100 x (1 - heat output / reference)      [%]
 
 Negative values mean the output is above the reference and are normal. When
-the compressor speed changes, the reference is rescaled in proportion to the
-speed term, and the capacity loss is frozen for a **300 s blanking window**
-while the heat output settles at the new speed.
+the compressor speed changes, the capacity loss is frozen while the heat
+output settles at the new speed, and then the reference is rescaled in
+proportion to the speed term. The freeze lasts **300 s, and longer if the
+speed is not yet steady**: the re-latch comes 300 s after the freeze began if
+`Compressor Speed Stable Time` is at 60 s or more by then, and otherwise at
+the moment it reaches 60 s (14 of 14 re-latches in two captures; the four
+delayed ones took 322-375 s).
 
 **Stage 5: the trigger.** A defrost is commanded once `Defrost Capacity Loss`
-has been at or above **15.0** continuously for **60 s**. Ten defrosts are on
-record and all ten end a 60-61 s dwell; none of the 19 other excursions above
-15.0 lasted beyond 29 s.
+has been at or above **15.0** continuously for **60 s**. Eleven defrosts are on
+record and all eleven end a 59-61 s dwell; none of the 19 other excursions
+above 15.0 lasted beyond 29 s. The eleventh was
+captured after the rule was written and fits it: one excursion above 15.0 in
+the capture, 58.8 s between its first and last poll, then the command.
+
+In all five captured defrosts the dwell began at a re-latch: the capacity loss
+had been frozen below 15, the reference stepped up with the compressor speed,
+and the unfrozen value was above 15 from its first poll. So in practice a
+defrost comes one minute after a re-latch that lands above the threshold.
 
 **Stage 6: reset.** In the first poll of the defrost the whole model is
 zeroed: `0x2147`, `0x2148`, `0x2149`, `0x214B`, `0x214C`, `0x2156`,
@@ -557,6 +586,140 @@ timer once it has added up to 3%.
   found that reads it.
 
 
+### 5.11 Who decides what
+
+A read-side value that changes in the same poll as a written one changed
+first, because the `0x2000` read is 0.19 s older than the `0x1000` write. A
+written value that shows up in a read one poll later originated with the
+controller.
+
+| decision | made by | evidence |
+|---|---|---|
+| start and end of a demand, heating or hot water | controller | `Demand Mode` is written; the outdoor unit's `0x2000` follows |
+| requested flow temperature | controller | written |
+| pump command | controller | written; the flow follows 3 polls later. The controller regulates the pump to the flow the outdoor unit asks for in `0x2001` |
+| **compressor speed while modulating** | **controller** | on the 8,867 polls in which `0x1002` moved, the target read one poll later equals it in 77% and the target read in the same poll in 4% |
+| the bounds and the rate for that speed | outdoor unit | `0x2002`, `0x2003` and `0x213F` are read. The controller's command stays inside the window in 99.5% of polls |
+| compressor speed at a start, a stop and in a defrost | outdoor unit | the target moves first; `0x1002` reads `0` through the pre-run and through all 1,231 defrost polls, and picks up from the target afterwards |
+| fan, expansion valve, four-way valve | outdoor unit | nothing on the write side corresponds |
+| when to defrost | outdoor unit | `0x2000` goes to `5` first; the controller's `Demand Mode` follows in the same poll |
+| the moment of a heating/hot-water changeover | outdoor unit | `0x2000` changes first, 91.2 s after the request; the controller's `0x1012` follows in the same poll and the diverter valve, which the controller drives, moves then |
+| heating episode active | controller | `0x1004` leads `Run Phase` by 1-6 polls |
+| heat output figure | controller | `0x1014` is computed and written; the outdoor unit uses it for the defrost decision |
+| flow/return calibration | controller | `0x1109` is written |
+
+So the outdoor unit is not a self-contained heat pump taking a setpoint. The
+speed control loop lives in the controller; the outdoor unit publishes the
+envelope it may work in, protects itself, and takes over for the sequences it
+owns.
+
+
+### 5.12 Power-up and loss of communication
+
+From three captures made for the purpose, all with the heat pump idle: the indoor unit powered off for two minutes, the outdoor unit
+powered off for two minutes, and the bus between them interrupted for two
+minutes.
+
+**The outdoor unit never transmits on its own.** With no controller polling
+it the bus is silent, for 119 and 120 s in the two captures that show it.
+
+**A device that powers up announces itself once** with ten bytes that are not
+Modbus: `55 AA 00 FF 01 03 07 80 C0 E0`. The indoor unit sent them when it
+booted and the outdoor unit sent the same ten when it booted. The first four
+are a line test pattern; the last six are not a valid Modbus message.
+
+**Controller boot.** After the announcement the controller:
+
+1. reads 6 registers from `0x2200` four times, about 100 ms apart. The answer
+   is `1, 1, 1, 405, 4, 7`: three identity words and the firmware version;
+2. starts the regular six-step cycle with the `0x2200` read. The three write
+   blocks carry their usual constants from the first write;
+3. writes `0x8000` for the outside temperature once, then the real value;
+   `Requested Flow Temp` reads 0 for the first two writes.
+
+No other function code, register block or exception response appears.
+
+**Outdoor unit boot.** Its first answers are complete, and the identity block
+is correct from the first read. A few values need one to three polls to
+settle and read 0 until then: `0x2137`, `0x2138`, `0x2139`, `0x213F`,
+`0x2142`, `0x2143`, `0x2159`, `0x215A`, `0x211B`, `0x2209`. `Time Since
+Defrost` restarts from 0, so it does not survive a power cut.
+
+**A controller with no outdoor unit** keeps polling in the same order at the
+same 1.2 s pace, with no retries and no change of pattern (290 unanswered
+requests in 116 s). After about 5 s without an answer it replaces the echoed
+temperatures `0x1005`, `0x1007`, `0x1008` with `0x8000`.
+
+**When the controller gets the outdoor unit back** it writes `Demand Mode` 6
+and `0x1018` = 1, for 4 writes after the outdoor unit's reboot and 9 after the
+bus interruption, then returns to 0. The outdoor unit's own mode word stays at
+0 throughout. A controller that has itself just booted does not do this.
+
+**An outdoor unit that lost its controller** reports it when the controller
+returns:
+
+| | |
+|---|---|
+| first poll after the gap | `Fault Code` reads 9998, `Hold-off Countdown` starts at 485 |
+| for the next 485 s | the fault stays, whatever the controller writes |
+| countdown reaches 0 | `Fault Code` returns to `0xFFFF` one poll later |
+
+How long the outdoor unit waits before raising the fault is not known: nothing
+can be read from it while the controller is silent. An outdoor unit that was
+itself powered off comes back with no fault and no countdown.
+
+**The controller holds off too.** In both power-cycle captures heating was
+requested a few minutes after communication returned. The controller set its
+episode flag `0x1004` and started the pump, ramping it up from 4%, but did not
+raise `Demand Mode` until 521 s and 530 s after communication had returned.
+From there the start sequence of [5.3](#53-start-sequence) ran as usual.
+
+
+### 5.13 Settings and test programs
+
+From a capture in which settings were changed one at a time.
+
+**A power limit is not on this bus.** With an EEBus limit of 300 W, then 500 W,
+then 600 W, then none, no written register changed apart from the demand
+itself. The controller enforces the limit with the two things it controls:
+
+| limit | what the controller did | measured power |
+|---|---|---|
+| 300 W | ended the demand. The machine cannot run that low: 28.6 rps drew 478 W | 6 W |
+| 500 W | raised the demand again. Through the 180 s start window the speed is fixed by the outdoor unit at 40 rps | 680 W, above the limit |
+| 600 W | once modulating, brought the speed command down to 33 rps | 560 W |
+| none | the same operating point | 590 W |
+
+So a limit below the start window's draw is exceeded for three minutes at
+every start, and a limit below the minimum speed's draw stops the machine.
+
+**Silent mode is one flag.** While the noise-reduction program was active
+the controller wrote `0x110D` = 1. `Compressor Speed Max` fell
+from 118.2 to 84.0 rps in the same poll and returned in the poll the flag
+cleared. Nothing else in the write blocks changed. Only the one level has been
+seen.
+
+**Installer test programs use `Demand Mode` 4** with the step in `0x100B`. The
+outdoor unit answers with `0x2000` = 4 and echoes the step in `0x2005`.
+
+| program | `0x100B` | what happens |
+|---|---|---|
+| P.06 air venting | `4` | the pump alone: 71 s at 100%, 19 s off, repeated for 15 minutes. `Run Phase` goes to 1 and 6 with it. Compressor and fan stay off |
+| P.12 defrost | `6` | a normal start sequence, then 60 s after the hand-off the outdoor unit goes into the defrost sequence of [5.6](#56-defrost-sequence) on its own: prepare 18 s, reverse 10 s, melt 78 s, then the usual return and recovery. At the end `0x2004` reads 1 for two polls and the controller clears the step |
+
+The forced defrost is the first one seen that the frost model did not ask
+for, and it shows a master can command one.
+
+**The flow/return calibration is measured in the venting program.** `0x1109`
+went from -5 to -3 at the end of one of the pump runs, where flow and return
+had read 357 and 360 for a minute with no heat input. So the controller sets
+the calibration to the difference between the two sensors when they must be
+seeing the same water.
+
+**The circulation pump is not in the outdoor unit's power figure**: 329 polls
+with the pump at 100% and compressor and fan off all read 6 W.
+
+
 ---
 
 ## 6. Formulas and identities
@@ -583,7 +746,8 @@ and a -0.3125 K offset it reads 18-19% below the true output. `Delta T`
     capacity loss [%] = 100 x (1 - heat output / defrost reference heat output)
 
 with the heat output taken from two writes earlier. Within 0.05 in every one
-of 20,315 polls in which the value changed.
+of 20,315 polls in which the value changed in the capture it was derived
+from, and in every one of 3,230 in a later capture.
 
 ### 6.3 Mains current (`0x201C`)
 
@@ -595,10 +759,38 @@ with a separate mains voltage sensor to a median of 0.2 V over 31 hours.
 
 ### 6.4 Refrigerant cycle identities
 
-    subcooling = condensing temp - condenser outlet temp
-    superheat  = compressor inlet temp - evaporating temp
+    subcooling = condensing temp - condenser outlet temp      (0x212A = 0x2126 - 0x200A)
+    superheat  = compressor inlet temp - evaporating temp      (0x212C = 0x2007 - 0x2128)
 
-Both exact. They are what identify `0x2126` and `0x2128`.
+They are what identify `0x2126` and `0x2128`, but **neither is exact**, and the
+earlier claim that both were is withdrawn. Over 252,017 normal-mode polls with
+the compressor turning, in the eleven captures that carry both blocks:
+
+| identity | exact | within 1 count | within 2 | median deviation |
+|---|---|---|---|---|
+| subcooling | 72.96% | **98.40%** | 98.40% | 0 |
+| superheat | 32.09% | 77.05% | 92.22% | 0 |
+
+Subcooling is a rounding residue and nothing more: the controller rounds the
+difference it computes once, while this sums two values each already rounded to
+1/16 K. Superheat is looser than that - 1st and 99th percentiles of -11 and +8
+counts, so 0.7 K tails - and is an approximation, not an identity. Pairing the
+blocks one poll earlier or later makes both worse, so the 0.877 s read gap
+between `0x2000` and `0x2100` is not the cause. Outside a run both degrade
+sharply, subcooling to a 99th percentile of +385 counts, because neither
+quantity means anything with the compressor stopped.
+
+**The superheat form is model-specific.** An aroTHERM Split plus computes it
+from the measured expansion-valve outlet temperature instead,
+`0x212C = 0x2007 - 0x2009`, exact to 1 count there; on this machine that form
+is 0.04% exact while running, with a median deviation of **+16 counts** - which
+is just the gap between the two sensors, `0x2009` sitting a median 0.4-1.1 K
+above `0x2128` in the recent captures and 6.9 K above in the earliest ones.
+The same difference runs the other way: `0x2007 - 0x2128` is off by up to
+14.9 K on the Split plus. Each machine is consistent with itself and the two
+choose different sensors, so neither map is wrong
+([9](#9-where-these-findings-come-from)).
+
 
 ### 6.5 De-rated temperature ceiling (`0x2137`)
 
@@ -645,7 +837,7 @@ Hot water follows a flatter, higher line. It moves at most 0.4 rps per poll.
 On some nights it slides down to exactly 60.0 rps for hours; what selects
 that is an open question.
 
-**Fixed windows.** [50, 60] rps for 180 s after every start, and [30, 50] rps
+**Fixed windows.** [50, 60] rps for 180 s after every start (once [40, 60]), and [30, 50] rps
 for about 110 s around every change between heating and hot water.
 
 ### 6.7 Compressor slew limit (`0x213F`)
@@ -672,7 +864,7 @@ The maximum rate at which `Compressor Speed Target` moves.
 
 - When the pump has headroom, the measured flow sits on it: median 1205 l/h,
   5th to 95th percentile 1199-1211.
-- When the pump is at 100% the flow can fall short: 1118-1172 l/h on the
+- When the pump is at 100% the flow can fall short: 1115-1172 l/h on the
   reference installation, whose heating circuit is too restrictive for the
   pump to reach the request.
 - The flow is essentially never above it (62 of 173,550 settled polls).
@@ -698,6 +890,10 @@ It is zero exactly when the pump is stopped, leads the flow sensor by 1-3
 polls and has twice its jitter. That fits a flow estimated from the pump
 rather than sensed. It is not a clean function of the pump command alone, so
 this is a Lead.
+
+It is also **monoblock-only**. A Split plus reads 32 registers from `0x2000`,
+not 34, so `0x2020` and `0x2021` do not exist there and no capture from one can
+say anything about either ([9](#9-where-these-findings-come-from)).
 
 ### 6.11 Fan-linked value (`0x2157`)
 
@@ -762,9 +958,7 @@ Comparisons are only meaningful over running samples.
 |---|---|
 | `0x2137` | which temperature it caps. Needs an 80 °C hot-water charge with the evaporator below -5 °C |
 | `0x2002` | what pulls it down to exactly 60 rps on some nights |
-| `0x211C` | what the 180 s guards. Needs a heat request repeated within three minutes of a stop |
 | `0x2146` | what reads the fan stability timer |
-| `0x214C`, `0x2148` | whether the attempt counter can assert in the 18.2 h rollover state |
 | the 60 s dwell | whether a dip below 15.0 inside the minute restarts it. Needs more defrosts |
 
 **Not on the bus, or not found**
@@ -772,7 +966,9 @@ Comparisons are only meaningful over running samples.
 - The base trace heater (about 30 W, on at or below roughly 2.9 °C). Finding
   it needs a capture with a cold idle; none exists.
 - The subcooling and superheat setpoints, the true discharge gas temperature,
-  and the cylinder temperature.
+  and the cylinder temperature. A Split plus carries the first of these on
+  `0x2129` = `0x215F` ([9](#9-where-these-findings-come-from)); this machine holds both at
+  `0`.
 
 **About 190 registers have never moved.** Passive capture cannot identify
 them beyond the constants labelled above by value.
@@ -785,11 +981,17 @@ Passive captures of the bus on one **VWZ AI + aroTHERM 75/8.1** installation,
 taken through autumn 2026 and deliberately different in character: two
 hot-water charges, a 17-hour pure standby, short and day-long space heating,
 a first cold capture with four defrosts and two hot-water charges inside
-heating, and two more nights of heating at 4-12 °C. The last capture arrived
-after the rules above were written and served as an out-of-sample test:
+heating, and further nights of heating at 2-13 °C. Two captures arrived after
+the rules above were written and served as out-of-sample tests: in the first
 every rule held except the single-segment form of the `0x2137` curve, which
-became the two segments in [6.5](#65-de-rated-temperature-ceiling-0x2137).
-Logged sensor data supplied six further defrosts.
+became the two segments in [6.5](#65-de-rated-temperature-ceiling-0x2137); the
+second contained a defrost, and the capacity-loss formula, the reference
+arming, the attempt counter, the 60 s dwell and the defrost sequence all held.
+Four short captures were made for a purpose: an indoor unit power cycle, an
+outdoor unit power cycle and a two-minute bus interruption, all idle
+([5.12](#512-power-up-and-loss-of-communication)), and a settings sweep
+([5.13](#513-settings-and-test-programs)). Logged sensor data supplied six
+further defrosts.
 
 All captures reassemble to 100% CRC-valid messages in the same six block
 shapes. Where a register was checked against something outside the bus, the
@@ -798,8 +1000,15 @@ MID-certified heat meter on the same water circuit, a separate electricity
 meter on the outdoor unit's supply, a separate mains voltage sensor, and the
 unit's own type plate and display.
 
-The other units in [section 1](#1-the-bus) were reported by their owners; on
-those, only the registers named there have been checked.
+**Another machine.** Ten excerpts of an **aroTHERM Split plus** - outdoor
+VWL 75/8.2 with indoor VWL 77/8.2 IS, firmware 405.3.3 - were contributed in
+[issue #4](https://github.com/thoutenbos/esphome-arotherm-modbus/issues/4)
+and are used for the cross-model checks above; they are the
+`tests/data/split-plus_*.hex` datasets. Its blocks are shorter in four places
+(`0x1000` 25, `0x1100` 14, `0x1200` 24, `0x2000` 32), so `0x1019`, `0x110E`,
+`0x1218`, `0x2020` and `0x2021` are absent there. The aroTHERM plus 7 kW in
+[section 1](#1-the-bus) was reported by its owner; on it only the registers
+named there have been checked.
 
 Two published sensors in the example configuration are computed in ESPHome
 rather than read from a register: `Heat Pump COP` (`Heat Output` over

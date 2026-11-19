@@ -68,6 +68,8 @@ arotherm_modbus:
     name: "EEV Outlet Temp"
   condensor_outlet_temp:
     name: "Condensor Outlet Temp"
+  condensor_inlet_temp:
+    name: "Condensor Inlet Temp"
   condensing_temp:
     name: "Condensing Temp"
   evaporating_temp:
@@ -93,6 +95,8 @@ arotherm_modbus:
     name: "Compressor Speed"
   compressor_speed_target:
     name: "Compressor Speed Target"
+  compressor_speed_command:
+    name: "Compressor Speed Command"
   compressor_speed_min:
     name: "Compressor Speed Min"
   compressor_speed_max:
@@ -133,18 +137,40 @@ arotherm_modbus:
     name: "Mains Voltage"
   active_current:
     name: "Mains Current"
+  compressor_power:
+    name: "Compressor Power"
 
   # --- Demand and state ---
   demand_mode:
     name: "Demand Mode"
   demand_state:
     name: "Demand State"
+  outdoor_mode:
+    name: "Outdoor Mode"
   run_phase:
     name: "Run Phase"
   demand_window:
     name: "Demand Window"
   lockout_duration:
     name: "Lockout Duration"
+  holdoff_countdown:
+    name: "Hold-off Countdown"
+  # Internal flags, rarely useful on a dashboard - uncomment if you need them.
+  # episode_active:
+  #   name: "Episode Active"
+  # lockout_flag:
+  #   name: "Lockout Flag"
+  # reinitialise_flag:
+  #   name: "Re-initialise Flag"
+
+  # --- Faults and settings ---
+  fault_code:
+    name: "Fault Code"
+  silent_mode_active:
+    name: "Silent Mode Active"
+  # The step of an installer test program; 0 outside one.
+  # test_program:
+  #   name: "Test Program"
 
   # --- Defrost ---
   defrost_sequence:

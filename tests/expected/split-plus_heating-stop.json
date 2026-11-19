@@ -1,0 +1,436 @@
+{
+ "adus": 96,
+ "shapes": {
+  "read-request 0x2000+32": 8,
+  "read-request 0x2100+98": 8,
+  "read-request 0x2200+73": 8,
+  "read-response 0x2000+32": 8,
+  "read-response 0x2100+98": 8,
+  "read-response 0x2200+73": 8,
+  "write-ack 0x1000+25": 8,
+  "write-ack 0x1100+14": 8,
+  "write-ack 0x1200+24": 8,
+  "write-request 0x1000+25": 8,
+  "write-request 0x1100+14": 8,
+  "write-request 0x1200+24": 8
+ },
+ "sensors": {
+  "demand_mode": {
+   "published": 8,
+   "first": 1.0,
+   "last": 0.0,
+   "min": 0.0,
+   "max": 1.0
+  },
+  "compressor_speed_command": {
+   "published": 8,
+   "first": 30.0,
+   "last": 27.3,
+   "min": 27.3,
+   "max": 30.0
+  },
+  "building_pump_power": {
+   "published": 8,
+   "first": 78.0,
+   "last": 78.3,
+   "min": 78.0,
+   "max": 78.3
+  },
+  "episode_active": {
+   "published": 8,
+   "first": 1.0,
+   "last": 1.0,
+   "min": 1.0,
+   "max": 1.0
+  },
+  "condensor_inlet_temp": {
+   "published": 8,
+   "first": 42.4375,
+   "last": 42.3125,
+   "min": 42.3125,
+   "max": 42.4375
+  },
+  "outside_temp": {
+   "published": 8,
+   "first": 8.0,
+   "last": 8.0,
+   "min": 8.0,
+   "max": 8.0
+  },
+  "building_circuit_flow_split": {
+   "published": 8,
+   "first": 1207.0,
+   "last": 1203.0,
+   "min": 1201.0,
+   "max": 1207.0
+  },
+  "hot_water_mode_active": {
+   "published": 8,
+   "first": 0.0,
+   "last": 0.0,
+   "min": 0.0,
+   "max": 0.0
+  },
+  "heat_output": {
+   "published": 8,
+   "first": 3288.0,
+   "last": 0.0,
+   "min": 0.0,
+   "max": 3288.0
+  },
+  "reinitialise_flag": {
+   "published": 8,
+   "first": 0.0,
+   "last": 0.0,
+   "min": 0.0,
+   "max": 0.0
+  },
+  "flow_return_calibration": {
+   "published": 8,
+   "first": 0.0,
+   "last": 0.0,
+   "min": 0.0,
+   "max": 0.0
+  },
+  "silent_mode_active": {
+   "published": 8,
+   "first": 0.0,
+   "last": 0.0,
+   "min": 0.0,
+   "max": 0.0
+  },
+  "outdoor_mode": {
+   "published": 8,
+   "first": 1.0,
+   "last": 1.0,
+   "min": 1.0,
+   "max": 1.0
+  },
+  "building_circuit_flow_target": {
+   "published": 8,
+   "first": 1206.0,
+   "last": 1206.0,
+   "min": 1206.0,
+   "max": 1206.0
+  },
+  "compressor_speed_max": {
+   "published": 8,
+   "first": 119.2,
+   "last": 0.0,
+   "min": 0.0,
+   "max": 119.2
+  },
+  "compressor_speed_min": {
+   "published": 8,
+   "first": 30.0,
+   "last": 0.0,
+   "min": 0.0,
+   "max": 30.0
+  },
+  "test_program": {
+   "published": 8,
+   "first": 0.0,
+   "last": 0.0,
+   "min": 0.0,
+   "max": 0.0
+  },
+  "defrost_sequence": {
+   "published": 8,
+   "first": 0.0,
+   "last": 0.0,
+   "min": 0.0,
+   "max": 0.0
+  },
+  "compressor_inlet_temp": {
+   "published": 8,
+   "first": 4.5,
+   "last": 4.5,
+   "min": 4.5,
+   "max": 4.5
+  },
+  "compressor_outlet_temp": {
+   "published": 8,
+   "first": 59.0,
+   "last": 59.0,
+   "min": 59.0,
+   "max": 59.0
+  },
+  "eev_outlet_temp": {
+   "published": 8,
+   "first": 3.25,
+   "last": 3.25,
+   "min": 3.1875,
+   "max": 3.25
+  },
+  "condensor_outlet_temp": {
+   "published": 8,
+   "first": 25.4375,
+   "last": 25.375,
+   "min": 25.375,
+   "max": 25.4375
+  },
+  "air_inlet_temp": {
+   "published": 8,
+   "first": 7.5625,
+   "last": 7.5625,
+   "min": 7.5625,
+   "max": 7.5625
+  },
+  "flow_temp": {
+   "published": 8,
+   "first": 28.25,
+   "last": 28.25,
+   "min": 28.25,
+   "max": 28.25
+  },
+  "return_temp": {
+   "published": 8,
+   "first": 25.9375,
+   "last": 25.9375,
+   "min": 25.9375,
+   "max": 25.9375
+  },
+  "low_pressure": {
+   "published": 8,
+   "first": 7.7,
+   "last": 8.0,
+   "min": 7.7,
+   "max": 8.0
+  },
+  "high_pressure": {
+   "published": 8,
+   "first": 17.4,
+   "last": 16.4,
+   "min": 16.4,
+   "max": 17.4
+  },
+  "compressor_speed": {
+   "published": 8,
+   "first": 30.0,
+   "last": 0.0,
+   "min": 0.0,
+   "max": 30.0
+  },
+  "fan1_speed": {
+   "published": 8,
+   "first": 421.0,
+   "last": 216.0,
+   "min": 216.0,
+   "max": 421.0
+  },
+  "building_circuit_flow": {
+   "published": 8,
+   "first": 0.0,
+   "last": 0.0,
+   "min": 0.0,
+   "max": 0.0
+  },
+  "run_phase": {
+   "published": 8,
+   "first": 0.0,
+   "last": 0.0,
+   "min": 0.0,
+   "max": 0.0
+  },
+  "compressor_power": {
+   "published": 8,
+   "first": 473.0,
+   "last": 2.0,
+   "min": 0.0,
+   "max": 474.0
+  },
+  "mains_voltage": {
+   "published": 8,
+   "first": 235.0,
+   "last": 236.0,
+   "min": 235.0,
+   "max": 236.0
+  },
+  "active_current": {
+   "published": 8,
+   "first": 2.0,
+   "last": 0.0,
+   "min": 0.0,
+   "max": 2.0
+  },
+  "fault_code": {
+   "published": 8,
+   "first": 65535.0,
+   "last": 65535.0,
+   "min": 65535.0,
+   "max": 65535.0
+  },
+  "electric_power_consumption": {
+   "published": 8,
+   "first": 487.0,
+   "last": 8.0,
+   "min": 6.0,
+   "max": 488.0
+  },
+  "holdoff_countdown": {
+   "published": 8,
+   "first": 0.0,
+   "last": 178.0,
+   "min": 0.0,
+   "max": 179.0
+  },
+  "eev_position": {
+   "published": 8,
+   "first": 71.0,
+   "last": 209.0,
+   "min": 71.0,
+   "max": 209.0
+  },
+  "lockout_flag": {
+   "published": 8,
+   "first": 0.0,
+   "last": 0.0,
+   "min": 0.0,
+   "max": 0.0
+  },
+  "compressor_speed_target": {
+   "published": 8,
+   "first": 30.0,
+   "last": 0.0,
+   "min": 0.0,
+   "max": 30.0
+  },
+  "fan_speed_target": {
+   "published": 8,
+   "first": 462.0,
+   "last": 258.0,
+   "min": 258.0,
+   "max": 462.0
+  },
+  "condensing_temp": {
+   "published": 8,
+   "first": 28.3125,
+   "last": 26.1875,
+   "min": 26.1875,
+   "max": 28.3125
+  },
+  "evaporating_temp": {
+   "published": 8,
+   "first": 2.375,
+   "last": 3.25,
+   "min": 2.375,
+   "max": 3.25
+  },
+  "subcooling": {
+   "published": 8,
+   "first": 2.875,
+   "last": 0.8125,
+   "min": 0.8125,
+   "max": 2.875
+  },
+  "superheat": {
+   "published": 8,
+   "first": 1.3125,
+   "last": 1.25,
+   "min": 1.25,
+   "max": 1.3125
+  },
+  "eev_position_status": {
+   "published": 8,
+   "first": 3.5,
+   "last": 42.8,
+   "min": 3.5,
+   "max": 42.8
+  },
+  "defrost_active": {
+   "published": 8,
+   "first": 0.0,
+   "last": 0.0,
+   "min": 0.0,
+   "max": 0.0
+  },
+  "derated_temp_ceiling": {
+   "published": 8,
+   "first": 63.5,
+   "last": 0.0,
+   "min": 0.0,
+   "max": 63.5
+  },
+  "compressor_slew_limit": {
+   "published": 8,
+   "first": 0.2,
+   "last": 2.0,
+   "min": 0.2,
+   "max": 2.0
+  },
+  "demand_state": {
+   "published": 8,
+   "first": 3.0,
+   "last": 4.0,
+   "min": 3.0,
+   "max": 4.0
+  },
+  "compressor_speed_stable_time": {
+   "published": 8,
+   "first": 264.0,
+   "last": 0.0,
+   "min": 0.0,
+   "max": 270.0
+  },
+  "fan_target_stable_time": {
+   "published": 8,
+   "first": 2798.0,
+   "last": 2.0,
+   "min": 0.0,
+   "max": 2802.0
+  },
+  "defrost_reference_heat_output": {
+   "published": 8,
+   "first": 0.0,
+   "last": 0.0,
+   "min": 0.0,
+   "max": 0.0
+  },
+  "defrost_reference_attempt": {
+   "published": 8,
+   "first": 0.0,
+   "last": 0.0,
+   "min": 0.0,
+   "max": 0.0
+  },
+  "time_since_defrost": {
+   "published": 8,
+   "first": 0.0,
+   "last": 0.0,
+   "min": 0.0,
+   "max": 0.0
+  },
+  "demand_window": {
+   "published": 8,
+   "first": 150.0,
+   "last": 150.0,
+   "min": 150.0,
+   "max": 150.0
+  },
+  "defrost_capacity_loss": {
+   "published": 8,
+   "first": 0.0,
+   "last": 0.0,
+   "min": 0.0,
+   "max": 0.0
+  },
+  "delta_t": {
+   "published": 8,
+   "first": 0.0,
+   "last": 0.0,
+   "min": 0.0,
+   "max": 0.0
+  },
+  "lockout_duration": {
+   "published": 8,
+   "first": 205.0,
+   "last": 205.0,
+   "min": 205.0,
+   "max": 205.0
+  }
+ },
+ "never_published": [
+  "requested_flow_temp",
+  "water_pressure"
+ ]
+}

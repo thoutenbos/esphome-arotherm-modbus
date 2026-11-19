@@ -39,7 +39,7 @@ def local_source(text):
 
 
 def split_plus(text):
-    out, skipping = [], False
+    out, skipping, in_split = [], False, False
     for line in text.splitlines():
         m = re.match(r"^  ([a-z0-9_]+):\s*$", line)
         if m:
@@ -48,9 +48,15 @@ def split_plus(text):
             skipping = False
         if skipping:
             continue
-        # uncomment the Split plus block
-        line = re.sub(r"^  # (building_circuit_flow_split:)", r"  \1", line)
-        line = re.sub(r"^  #   (id|name): ", r"    \1: ", line)
+        # uncomment the Split plus block, and only that one: other sensors
+        # are commented out the same way and must stay so
+        if re.match(r"^  # building_circuit_flow_split:", line):
+            in_split = True
+            line = "  building_circuit_flow_split:"
+        elif in_split and re.match(r"^  #   (id|name): ", line):
+            line = re.sub(r"^  #   (id|name): ", r"    \1: ", line)
+        else:
+            in_split = False
         out.append(line)
     result = "\n".join(out) + "\n"
     if "\n  building_circuit_flow_split:" not in result:
